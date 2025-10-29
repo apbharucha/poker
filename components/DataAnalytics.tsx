@@ -11,7 +11,7 @@ interface DataAnalyticsProps {
   sessionStartTime?: number;
 }
 
-export function DataAnalytics({ gameState, sessionStartTime }: DataAnalyticsProps) {
+export function DataAnalytics({ sessionStartTime }: DataAnalyticsProps) {
   const [stats, setStats] = useState<any>(null);
   const [handsCount, setHandsCount] = useState(0);
   const [actionsCount, setActionsCount] = useState(0);

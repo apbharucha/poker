@@ -8,7 +8,7 @@ import { GamePhaseManager } from '@/components/GamePhaseManager';
 import { PlayerInsightModal } from '@/components/PlayerInsightModal';
 import { PlayerSettingsDialog } from '@/components/PlayerSettingsDialog';
 import { DataAnalytics } from '@/components/DataAnalytics';
-import { PlayerStats } from '@/components/PlayerStats';
+// import { PlayerStats } from '@/components/PlayerStats';
 import { PlayerStatsTable } from '@/components/PlayerStatsTable';
 import { GameSettingsDialog } from '@/components/GameSettingsDialog';
 import { HandHistoryLogs } from '@/components/HandHistoryLogs';
@@ -18,8 +18,8 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+// import { Input } from '@/components/ui/input';
+// import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   GameSetup as GameSetupType,
   GameState,

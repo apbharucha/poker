@@ -20,7 +20,7 @@ function detectDraws(holeCards: Card[], communityCards: Card[]): string[] {
   // Check for flush draw
   const suitCounts = new Map<string, number>();
   suits.forEach(s => suitCounts.set(s, (suitCounts.get(s) || 0) + 1));
-  suitCounts.forEach((count, suit) => {
+  suitCounts.forEach((count) => {
     if (count === 4) {
       draws.push('Flush Draw');
     }

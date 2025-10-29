@@ -28,12 +28,11 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
     context.playerStack,
     context.opponentStacks || [],
     context.bigBlind,
-    context.pot,
     context.startingStack
   );
   
   // Factor in opponent analytics for more accurate win probability
-  const opponentProfile = analyzeOpponentTendencies(context.opponentAnalytics, context.playerActions);
+  const opponentProfile = analyzeOpponentTendencies(context.opponentAnalytics);
   const winProbability = estimateWinProbability(
     context.holeCards, 
     context.communityCards, 
@@ -206,8 +205,7 @@ interface StackPsychology {
 }
 
 function analyzeOpponentTendencies(
-  analytics: Record<number, PlayerAnalytics> | undefined,
-  actions: Array<{ action: ActionType; amount?: number }>
+  analytics: Record<number, PlayerAnalytics> | undefined
 ): OpponentProfile {
   if (!analytics || Object.keys(analytics).length === 0) {
     // Default balanced profile
@@ -247,7 +245,6 @@ function analyzeStackPsychology(
   heroStack: number,
   opponentStacks: number[],
   bigBlind: number,
-  pot: number,
   startingStack?: number
 ): StackPsychology {
   const heroBBs = heroStack / bigBlind;
@@ -556,8 +553,8 @@ function determineOptimalAction(
   }
   
   // Apply stack-based bluff adjustments to context bluffing logic
-  const enhancedBluffIntent = context.bluffIntent && stackBasedBluffIncentive > -50;
-  const shouldReduceBluffSize = stackBasedBluffIncentive < -20;
+  // const enhancedBluffIntent = context.bluffIntent && stackBasedBluffIncentive > -50;
+  // const shouldReduceBluffSize = stackBasedBluffIncentive < -20;
 
   // Preflop-specific strategy adjustments to avoid overly tight folds
   if (context.currentRound === 'preflop') {
@@ -1035,7 +1032,7 @@ export function generatePlayerInsight(
   const raises = playerActions.filter(a => a.action === 'raise' || a.action === 'bet' || a.action === 'all-in').length;
   const calls = playerActions.filter(a => a.action === 'call').length;
   const checks = playerActions.filter(a => a.action === 'check').length;
-  const folds = playerActions.filter(a => a.action === 'fold').length;
+  // const folds = playerActions.filter(a => a.action === 'fold').length;
   const allIns = playerActions.filter(a => a.action === 'all-in').length;
 
   let likelyRange = 'Wide, mixed strength';
@@ -1067,9 +1064,9 @@ export function generatePlayerInsight(
   }
   
   const street = context?.currentRound || 'unknown';
-  const communityCards = context?.communityCards || [];
-  const hasFlushDraw = communityCards.length >= 3;
-  const hasStraightPossible = communityCards.length >= 3;
+  // const communityCards = context?.communityCards || [];
+  // const hasFlushDraw = communityCards.length >= 3;
+  // const hasStraightPossible = communityCards.length >= 3;
   
   // Analyze betting patterns
   if (raises >= 3) {

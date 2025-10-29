@@ -106,7 +106,7 @@ export function HandHistoryLogs({ sessionStartTime }: HandHistoryLogsProps) {
   };
 
   const formatCard = (card: any) => {
-    return `${card.rank}${SUIT_SYMBOLS[card.suit]}`;
+    return `${card.rank}${SUIT_SYMBOLS[card.suit as Suit]}`;
   };
 
   const downloadLogs = () => {
@@ -234,7 +234,7 @@ export function HandHistoryLogs({ sessionStartTime }: HandHistoryLogsProps) {
               <SelectValue placeholder="Select a hand" />
             </SelectTrigger>
             <SelectContent>
-              {hands.map((hand, idx) => (
+              {hands.map((hand) => (
                 <SelectItem key={hand.id} value={hand.id}>
                   Hand #{hand.handNumber} - {new Date(hand.timestamp).toLocaleTimeString()}
                 </SelectItem>
