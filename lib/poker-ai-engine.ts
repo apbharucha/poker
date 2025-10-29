@@ -1064,8 +1064,8 @@ export function generatePlayerInsight(
   }
   
   const street = context?.currentRound || 'unknown';
-  // const communityCards = context?.communityCards || [];
-  // const hasFlushDraw = communityCards.length >= 3;
+  const communityCards = context?.communityCards || [];
+  const hasFlushDraw = communityCards.length >= 3;
   // const hasStraightPossible = communityCards.length >= 3;
   
   // Analyze betting patterns
@@ -1109,6 +1109,12 @@ export function generatePlayerInsight(
     confidence = 45;
     bluffLikelihood = street === 'river' ? 55 : 35;
     suspiciousActions.push('all-in move is highly polarizing');
+  }
+  
+  // Use hasFlushDraw for board analysis
+  if (hasFlushDraw && communityCards.length >= 4) {
+    // Flush draw present - affects range analysis
+    bluffLikelihood = Math.min(65, bluffLikelihood + 5);
   }
   
   // Adjust bluff likelihood based on street

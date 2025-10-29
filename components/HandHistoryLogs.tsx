@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { getDataStorage } from '@/lib/storage';
 import { FileText, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SUIT_SYMBOLS } from '@/lib/poker-utils';
+import { Suit } from '@/types/poker';
 
 interface HandHistoryLogsProps {
   sessionStartTime?: number;
