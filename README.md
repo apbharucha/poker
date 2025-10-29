@@ -31,3 +31,4 @@ Request format from the client (already wired):
 ## 5) Notes
 - storage.ts keeps localStorage as the primary store and mirrors events to /api/track fire-and-forget.
 - For structured analytics, emit explicit inserts to hands/player_actions/ai_recommendations in api routes as a follow-up.
+Testing auto-deploy
