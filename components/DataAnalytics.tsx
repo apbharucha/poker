@@ -4,8 +4,14 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { getDataStorage } from '@/lib/storage';
 import { BarChart3, Download, Trash2, RefreshCw } from 'lucide-react';
+import { GameState } from '@/types/poker';
 
-export function DataAnalytics() {
+interface DataAnalyticsProps {
+  gameState?: GameState;
+  sessionStartTime?: number;
+}
+
+export function DataAnalytics({ gameState, sessionStartTime }: DataAnalyticsProps) {
   const [stats, setStats] = useState<any>(null);
   const [handsCount, setHandsCount] = useState(0);
   const [actionsCount, setActionsCount] = useState(0);
@@ -16,10 +22,30 @@ export function DataAnalytics() {
   const loadStats = () => {
     setIsLoading(true);
     try {
-      const aiStats = dataStorage.getAIAccuracyStats();
-      const hands = dataStorage.getHands();
+      const allHands = dataStorage.getHands();
+      const allRecommendations = dataStorage.getAIRecommendations();
+      const allActions = dataStorage.getPlayerActions();
+      
+      // Filter to current session only if sessionStartTime provided
+      const hands = sessionStartTime 
+        ? allHands.filter((h: any) => h.timestamp >= sessionStartTime)
+        : allHands;
+      
       const completedHandIds = new Set(hands.map((h: any) => h.id));
-      const actions = dataStorage.getPlayerActions().filter((a: any) => completedHandIds.has(a.handId));
+      const recommendations = allRecommendations.filter((r: any) => completedHandIds.has(r.handId));
+      const actions = allActions.filter((a: any) => completedHandIds.has(a.handId));
+      
+      // Calculate AI stats for current session
+      const validRecs = recommendations.filter((rec: any) => rec.actualOutcome !== undefined);
+      const aiStats = validRecs.length > 0 ? {
+        totalRecommendations: validRecs.length,
+        followRate: validRecs.filter((rec: any) => rec.wasFollowed === true).length / validRecs.length,
+        avgConfidence: validRecs.reduce((sum: number, rec: any) => sum + rec.recommendation.winProbability, 0) / validRecs.length
+      } : {
+        totalRecommendations: 0,
+        followRate: 0,
+        avgConfidence: 0
+      };
       
       setStats(aiStats);
       setHandsCount(hands.length);
@@ -32,7 +58,7 @@ export function DataAnalytics() {
 
   useEffect(() => {
     loadStats();
-  }, []);
+  }, [sessionStartTime]);
 
   const exportData = () => {
     try {
@@ -108,7 +134,7 @@ export function DataAnalytics() {
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <BarChart3 className="h-5 w-5" />
-          Poker Data Analytics
+          {sessionStartTime ? 'Current Game Analytics' : 'Poker Data Analytics'}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

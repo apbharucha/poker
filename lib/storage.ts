@@ -1,4 +1,4 @@
-import { AIRecommendation, GameState, Player, ActionType } from '@/types/poker';
+import { AIRecommendation, GameState, Player, ActionType, PlayerAnalytics } from '@/types/poker';
 
 export interface StoredHand {
   id: string;
@@ -46,6 +46,8 @@ export class PokerDataStorage {
   private readonly PLAYER_REVEALS_KEY = 'poker_player_reveals';
   private readonly PLAYER_NOTES_KEY = 'poker_player_notes';
   private readonly BLUFF_STATS_KEY = 'poker_bluff_stats';
+  private readonly PLAYER_ANALYTICS_KEY = 'poker_player_analytics';
+  private readonly PLAYER_CUSTOM_NAMES_KEY = 'poker_player_custom_names';
 
   // Generate unique ID
   private generateId(): string {
@@ -276,12 +278,89 @@ export class PokerDataStorage {
     this.postEvent({ type: 'revealed_hand', payload: { playerId, didShow: false } });
   }
 
+  // Player Analytics
+  public getPlayerAnalytics(): Record<number, PlayerAnalytics> {
+    const raw = localStorage.getItem(this.PLAYER_ANALYTICS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  public getPlayerAnalyticsById(playerId: number): PlayerAnalytics | null {
+    const analytics = this.getPlayerAnalytics();
+    return analytics[playerId] || null;
+  }
+
+  public updatePlayerAnalytics(playerId: number, analytics: Partial<PlayerAnalytics>): void {
+    const allAnalytics = this.getPlayerAnalytics();
+    const existing = allAnalytics[playerId] || this.createDefaultAnalytics(playerId);
+    
+    allAnalytics[playerId] = {
+      ...existing,
+      ...analytics,
+      lastUpdated: Date.now()
+    };
+    
+    localStorage.setItem(this.PLAYER_ANALYTICS_KEY, JSON.stringify(allAnalytics));
+    this.postEvent({ type: 'player_analytics_updated', payload: { playerId, analytics } });
+  }
+
+  public createDefaultAnalytics(playerId: number, playerName: string = `Player ${playerId}`): PlayerAnalytics {
+    return {
+      playerId,
+      playerName,
+      vpip: 0,
+      pfr: 0,
+      aggressionFactor: 0,
+      threeBetPercent: 0,
+      foldToCBetPercent: 0,
+      cBetPercent: 0,
+      vpipByPosition: { EP: 0, MP: 0, LP: 0, BB: 0, SB: 0 },
+      pfrByPosition: { EP: 0, MP: 0, LP: 0, BB: 0, SB: 0 },
+      wtsd: 0,
+      wsd: 0,
+      bluffFrequency: 30,
+      calldownFrequency: 0,
+      foldToAggression: 0,
+      handsTracked: 0,
+      lastUpdated: Date.now(),
+      notes: '',
+      tags: []
+    };
+  }
+
+  // Custom player names
+  public getPlayerCustomNames(): Record<number, string> {
+    const raw = localStorage.getItem(this.PLAYER_CUSTOM_NAMES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  public setPlayerCustomName(playerId: number, customName: string): void {
+    const names = this.getPlayerCustomNames();
+    names[playerId] = customName;
+    localStorage.setItem(this.PLAYER_CUSTOM_NAMES_KEY, JSON.stringify(names));
+    
+    // Also update in analytics
+    const analytics = this.getPlayerAnalytics();
+    if (analytics[playerId]) {
+      analytics[playerId].customName = customName;
+      localStorage.setItem(this.PLAYER_ANALYTICS_KEY, JSON.stringify(analytics));
+    }
+    
+    this.postEvent({ type: 'player_name_customized', payload: { playerId, customName } });
+  }
+
+  public getPlayerDisplayName(playerId: number, defaultName: string): string {
+    const customNames = this.getPlayerCustomNames();
+    return customNames[playerId] || defaultName;
+  }
+
   // Export data for backup
   public exportData(): string {
     return JSON.stringify({
       hands: this.getHands(),
       aiRecommendations: this.getAIRecommendations(),
       playerActions: this.getPlayerActions(),
+      playerAnalytics: this.getPlayerAnalytics(),
+      playerCustomNames: this.getPlayerCustomNames(),
       exportTimestamp: Date.now()
     });
   }

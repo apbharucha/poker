@@ -7,7 +7,7 @@ export interface Card {
 }
 
 export type BettingRound = 'preflop' | 'flop' | 'turn' | 'river';
-export type ActionType = 'fold' | 'check' | 'call' | 'raise' | 'all-in';
+export type ActionType = 'fold' | 'check' | 'call' | 'bet' | 'raise' | 'all-in';
 
 export interface PlayerAction {
   playerId: number;
@@ -19,16 +19,53 @@ export interface PlayerAction {
 export interface Player {
   id: number;
   name: string;
+  customName?: string; // User-defined name for this player
   stack: number;
   position: number;
   isDealer: boolean;
   isSmallBlind: boolean;
   isBigBlind: boolean;
   isActive: boolean;
+  isAway?: boolean; // Player is in away mode (idle)
   currentBet: number;
   handsPlayed: number;
   handsWon: number;
   actions: PlayerAction[];
+}
+
+export interface PlayerAnalytics {
+  playerId: number;
+  playerName: string;
+  customName?: string;
+  
+  // Core stats
+  vpip: number; // Voluntarily Put $ In Pot %
+  pfr: number; // Pre-Flop Raise %
+  aggressionFactor: number; // (Bet + Raise) / Call ratio
+  threeBetPercent: number; // 3-bet %
+  foldToCBetPercent: number; // Fold to continuation bet %
+  cBetPercent: number; // Continuation bet %
+  
+  // Positional stats
+  vpipByPosition: Record<string, number>; // VPIP by position (EP, MP, LP, BB, SB)
+  pfrByPosition: Record<string, number>;
+  
+  // Showdown stats
+  wtsd: number; // Went to Showdown %
+  wsd: number; // Won at Showdown %
+  
+  // Tendency indicators
+  bluffFrequency: number; // Estimated bluff frequency (0-100)
+  calldownFrequency: number; // How often they call to showdown
+  foldToAggression: number; // How often they fold when facing aggression
+  
+  // Hand count for stat reliability
+  handsTracked: number;
+  lastUpdated: number;
+  
+  // Notes
+  notes?: string;
+  tags?: string[]; // e.g., ['tight', 'aggressive', 'bluffs_river']
 }
 
 export interface GameSetup {

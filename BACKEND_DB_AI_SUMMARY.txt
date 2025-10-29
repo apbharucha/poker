@@ -21,6 +21,7 @@ Backend APIs
 Database (Supabase)
 - events (id, type, payload, created_at) with RLS (insert/select)
 - hands, ai_recommendations, player_actions (structured storage)
+- player_analytics (per‑player stats: VPIP, PFR, aggression, bluff freq, etc.)
 - external_sources (url, kind, last_ingested_at)
 - imported_hands (raw/normalized imported data)
 - model_params (name, params)
@@ -30,10 +31,13 @@ Telemetry Events Captured
 - hand_stored, player_action, ai_recommendation
 - bluff_attempt, bluff_result, player_tag
 - revealed_hand (or didShow:false), set_stack
+- player_away_mode (toggles), redo_action (cascading rollbacks)
 
 AI/Training
 - Frontend AI estimates hand strength, win prob, EV; suggests primary/secondary with frequencies
 - Bluff-aware and force‑bluff logic; Smart Bluff Opportunity detector across all streets
+- Stack psychology analysis: classifies stacks (short/medium/deep), calculates desperation/intimidation
+- Opponent analytics integration: adjusts strategy based on VPIP, PFR, aggression factor
 - Trainer aggregates bluff success rates and stores in model_params
 - Frontend lazily loads model_params and adjusts bluff success odds at runtime
 - Auto-train triggers: every 10th hand stored (api/track and local /events) and daily cron
@@ -42,7 +46,19 @@ Ingestion
 - /api/ingest supports UCI poker CSV; stores in imported_hands with normalized kind
 - Extendable parsers for additional structured sources (CSV/JSON/NDJSON)
 
+Storage (localStorage)
+- Game state, hand history, player analytics, bluff stats persisted locally
+- Training data buffered and submitted after 3+ hands to backend
+- Export/import functionality for data backup and migration
+
 Dev/Deploy Notes
 - Env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (server only)
 - vercel.json rewrites SPA and defines cron for /api/train
 - Local dev: run frontend (vite) and backend (tsx server/index.ts)
+- Dependencies: @radix‑ui/react‑switch for away mode toggle UI
+
+Recent Updates (v1.8)
+- Away Mode: player idle status tracking and automatic turn skipping
+- Stack Psychology: AI factors stack‑to‑blind ratios into recommendations
+- Opponent Analytics: persistent player stats with custom names and tags
+- Pot Update Fix: enhanced React state management for real‑time updates

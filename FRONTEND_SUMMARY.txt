@@ -9,9 +9,12 @@ Key Features
   - Blind inputs support clean numeric typing
 - Table UI
   - Player cards with BTN/SB/BB toggles
+  - Player Settings dialog per player (name, stack, positions, away mode, remove)
+  - Away Mode: toggle players as idle; auto‑skipped during turns with 🌙 badge
   - Set Player Stack control (in‑game), remove player, add player
   - Auto award entire pot when only one active player remains (fold‑out)
   - Round locking with Confirm Round and Back to Actions to edit
+  - Redo Action with cascading rollback for all subsequent players
 - Rounds and cards
   - Controlled tabs; jump to Community on flop/turn/river
   - Hole card selector disabled after flop
@@ -21,17 +24,33 @@ Key Features
   - Bluff-aware mode + Continue Bluff enforcing aggressive line
   - Smart Bluff Opportunity prompts across preflop/flop/turn/river with success odds
   - Loads learned model params to modulate bluff success estimates
+  - Stack psychology analysis: adjusts recommendations based on hero/opponent stack sizes
+  - Opponent analytics integration: factors VPIP, PFR, aggression into decisions
 - Per‑player insights
   - AI Insight button per opponent (preflop hidden for blinds until they act)
   - Action‑based range/summary; confidence score
   - Record revealed hands or mark “did not show”
 - Analytics
   - DataAnalytics with AI accuracy stats and data export/import
-  - Players tab with tagging (bluff success/fail, aggression, value betting, called bluff)
+  - Players tab with custom names, playing style classifications, stat editing
+  - Player tagging (bluff success/fail, aggression, value betting, called bluff)
+  - Hand History Logs with full action replay and downloadable text export
 - Telemetry & events
   - Fire‑and‑forget events for hands, actions, AI recs, tags, bluffs, revealed hands, set_stack
+  - Training data submission to backend after 3+ completed hands
 
 Notable Behaviors
 - Immediate hand end and pot award on last fold
+- Real‑time pot updates with React key‑based forced re‑renders after every action
+- Away players automatically skipped in turn order with safety loops
 - Inputs sanitize numeric values; big blind enforced ≥ small blind on start
 - Insight visibility rules for blinds preflop
+- Action panel auto‑hides for all‑in scenarios; green completion notice shown
+- Community card validation prevents action input until proper cards selected
+
+Recent Updates (v1.8)
+- Away Mode: per‑player idle status with automatic turn skipping
+- Pot Display Fix: enhanced state management for instant pot updates
+- Stack Psychology: AI analyzes stack sizes relative to blinds (short/medium/deep)
+- Player Settings Dialog: unified interface for all player modifications
+- Hand History Logs: complete action replay with downloadable exports

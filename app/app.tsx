@@ -6,8 +6,13 @@ import { AIRecommendation } from '@/components/AIRecommendation';
 import { PlayerActionPanel } from '@/components/PlayerActionPanel';
 import { GamePhaseManager } from '@/components/GamePhaseManager';
 import { PlayerInsightModal } from '@/components/PlayerInsightModal';
+import { PlayerSettingsDialog } from '@/components/PlayerSettingsDialog';
 import { DataAnalytics } from '@/components/DataAnalytics';
 import { PlayerStats } from '@/components/PlayerStats';
+import { PlayerStatsTable } from '@/components/PlayerStatsTable';
+import { GameSettingsDialog } from '@/components/GameSettingsDialog';
+import { HandHistoryLogs } from '@/components/HandHistoryLogs';
+import { HandStrength } from '@/components/HandStrength';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,13 +29,14 @@ import {
   AIRecommendation as AIRecommendationType,
 } from '@/types/poker';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Dices, SkipForward, Brain } from 'lucide-react';
+import { Dices, SkipForward, Brain, Settings, Home } from 'lucide-react';
 import { generateAIRecommendation } from '@/lib/poker-ai-engine';
 import { SUIT_SYMBOLS, SUIT_COLORS } from '@/lib/poker-utils';
 import { getDataStorage } from '@/lib/storage';
 
 function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
+  const [sessionStartTime, setSessionStartTime] = useState<number | null>(null);
   const [aiRecommendation, setAiRecommendation] = useState<AIRecommendationType | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [currentHandId, setCurrentHandId] = useState<string | null>(null);
@@ -41,13 +47,13 @@ function App() {
   
   const dataStorage = getDataStorage();
   const [bluffStats, setBluffStats] = useState<{ attempts: number; successes: number; failures: number }>(() => dataStorage.getBluffStats());
-  const [newPlayerName, setNewPlayerName] = useState<string>('');
-  const [newPlayerStack, setNewPlayerStack] = useState<number>(0);
-  const [removePlayerId, setRemovePlayerId] = useState<number | null>(null);
   const [insightOpen, setInsightOpen] = useState(false);
   const [insightPlayer, setInsightPlayer] = useState<Player | null>(null);
-  const [setStackPlayerId, setSetStackPlayerId] = useState<number | null>(null);
-  const [setStackAmount, setSetStackAmount] = useState<number | ''>('');
+  const [insightAllowReveal, setInsightAllowReveal] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [playerSettingsOpen, setPlayerSettingsOpen] = useState(false);
+  const [selectedPlayer, setSelectedPlayer] = useState<Player | null>(null);
+  const [bettingPhaseActive, setBettingPhaseActive] = useState(true);
   
   const initializeGame = useCallback((setup: GameSetupType) => {
     const smallBlindPos = setup.numberOfPlayers === 2 ? 0 : 1;
@@ -76,11 +82,23 @@ function App() {
         isSmallBlind: i === smallBlindPos,
         isBigBlind: i === bigBlindPos,
         isActive: playerStack > 0,
+        isAway: false,
         currentBet: currentBet,
         handsPlayed: 0,
         handsWon: 0,
         actions: [],
       });
+    }
+
+    // Find first non-away player after big blind for initial turn
+    let initialTurn = (bigBlindPos + 1) % setup.numberOfPlayers;
+    let safety = 0;
+    while (
+      safety < setup.numberOfPlayers &&
+      players[initialTurn].isAway
+    ) {
+      initialTurn = (initialTurn + 1) % setup.numberOfPlayers;
+      safety++;
     }
 
     const newGameState = {
@@ -94,12 +112,17 @@ function App() {
       dealerPosition: 0,
       smallBlindPosition: smallBlindPos,
       bigBlindPosition: bigBlindPos,
-      currentPlayerTurn: (bigBlindPos + 1) % setup.numberOfPlayers,
+      currentPlayerTurn: initialTurn,
       handHistory: [],
       bettingComplete: false,
     };
     
     setGameState(newGameState);
+    
+    // Track session start time
+    if (!sessionStartTime) {
+      setSessionStartTime(Date.now());
+    }
     
     // Create a temporary hand id (only persist on completion)
     const tempId = Date.now().toString() + Math.random().toString(36).slice(2);
@@ -122,6 +145,22 @@ function App() {
       const heroToCall = Math.max(0, tableMaxBet - gameState.players[0].currentBet);
       const roundForAI = gameState.currentRound === 'showdown' ? 'river' : gameState.currentRound;
 
+      // Load opponent analytics for AI decision making
+      const opponentAnalytics: Record<number, any> = {};
+      gameState.players.forEach(player => {
+        if (player.id !== 0) { // Exclude hero
+          const analytics = dataStorage.getPlayerAnalyticsById(player.id);
+          if (analytics) {
+            opponentAnalytics[player.id] = analytics;
+          }
+        }
+      });
+
+      // Collect opponent stack sizes for stack psychology analysis
+      const opponentStacks = gameState.players
+        .filter(p => p.id !== 0 && p.isActive) // Exclude hero, only active opponents
+        .map(p => p.stack);
+
       const recommendation = generateAIRecommendation({
         holeCards: gameState.userHoleCards,
         communityCards: gameState.communityCards,
@@ -135,6 +174,9 @@ function App() {
         playerActions: allPlayerActions,
         bluffIntent,
         forceBluff,
+        opponentAnalytics,
+        opponentStacks, // Stack sizes for stack psychology
+        startingStack: gameState.setup.startingBalance, // Starting balance for context
       });
 
       setAiRecommendation(recommendation);
@@ -182,6 +224,7 @@ function App() {
           player.stack -= actionAmount;
           break;
         }
+        case 'bet':
         case 'raise':
           actionAmount = (amount || 0) - player.currentBet;
           actionAmount = Math.min(actionAmount, player.stack);
@@ -219,7 +262,9 @@ function App() {
         );
       }
 
-      const newPot = gameState.pot + actionAmount;
+      let newPot = gameState.pot + actionAmount;
+      
+      console.log(`[Pot Update] Action: ${action}, Amount: $${actionAmount}, Old Pot: $${gameState.pot}, New Pot: $${newPot}`);
 
       // If only one player remains active, end the hand immediately and award the pot
       const remainingActive = updatedPlayers.filter(p => p.isActive).length;
@@ -256,13 +301,23 @@ function App() {
         return;
       }
 
+      // Check if round should auto-complete
+      const activePlayers = updatedPlayers.filter(p => p.isActive && p.stack > 0);
+      const maxBet = Math.max(...updatedPlayers.map(p => p.currentBet));
+      const allMatched = activePlayers.every(p => p.currentBet === maxBet || p.stack === 0);
+      
       setGameState({
         ...gameState,
         players: updatedPlayers,
         pot: newPot,
+        bettingComplete: allMatched && activePlayers.length > 1
       });
+      
+      if (allMatched && activePlayers.length > 1) {
+        setBettingPhaseActive(false);
+      }
     },
-    [gameState]
+    [gameState, bluffAttemptActive, bluffEligible, dataStorage, currentHandId]
   );
 
   const advanceRound = useCallback(() => {
@@ -273,12 +328,24 @@ function App() {
 
     if (currentIndex < roundOrder.length - 1) {
       const nextRound = roundOrder[currentIndex + 1];
+      
+      // Find the first non-away player starting from dealer + 1
+      let nextPlayerIdx = (gameState.dealerPosition + 1) % gameState.players.length;
+      let safety = 0;
+      while (
+        safety < gameState.players.length &&
+        gameState.players[nextPlayerIdx].isAway
+      ) {
+        nextPlayerIdx = (nextPlayerIdx + 1) % gameState.players.length;
+        safety++;
+      }
+      
       setGameState({
         ...gameState,
         currentRound: nextRound,
         players: gameState.players.map((p) => ({ ...p, currentBet: 0 })),
         bettingComplete: false,
-        currentPlayerTurn: (gameState.dealerPosition + 1) % gameState.players.length,
+        currentPlayerTurn: nextPlayerIdx,
       });
       if (nextRound === 'flop' || nextRound === 'turn' || nextRound === 'river') {
         setActiveTab('community');
@@ -287,18 +354,37 @@ function App() {
     }
   }, [gameState]);
 
-  const nextPlayer = useCallback(() => {
+  const nextPlayer = useCallback((skipPriorityCheck = false) => {
     if (!gameState) return;
     
+    // First, check if there are any active players who haven't acted yet (unless skipping)
+    if (!skipPriorityCheck) {
+      const playersWithoutAction = gameState.players.filter(p => 
+        p.isActive && p.stack > 0 && p.actions.length === 0 && !p.isAway
+      );
+      
+      // If there are players without actions, go to the first one
+      if (playersWithoutAction.length > 0) {
+        setGameState({
+          ...gameState,
+          currentPlayerTurn: playersWithoutAction[0].id,
+        });
+        return;
+      }
+    }
+    
+    // Proceed to next player in order
     let nextPlayerIndex = gameState.currentPlayerTurn;
     let safety = 0;
     do {
       nextPlayerIndex = (nextPlayerIndex + 1) % gameState.players.length;
       safety++;
-      // Skip players who are folded/inactive or have zero stack
+      // Skip players who are folded/inactive, have zero stack, or are away
     } while (
       safety < gameState.players.length &&
-      (!gameState.players[nextPlayerIndex].isActive || gameState.players[nextPlayerIndex].stack === 0)
+      (!gameState.players[nextPlayerIndex].isActive || 
+       gameState.players[nextPlayerIndex].stack === 0 ||
+       gameState.players[nextPlayerIndex].isAway)
     );
 
     setGameState({
@@ -314,6 +400,7 @@ function App() {
       ...gameState,
       bettingComplete: true,
     });
+    setBettingPhaseActive(false);
   }, [gameState]);
 
   const finishHand = useCallback((outcome: string) => {
@@ -321,6 +408,27 @@ function App() {
     
     // Store the completed hand in database (only completed hands are persisted)
     dataStorage.storeHand(gameState, outcome);
+    
+    // Check if we should upload training data (after 3+ hands)
+    const completedHands = dataStorage.getHands();
+    if (completedHands.length >= 3) {
+      // Submit training data to backend
+      const trainingData = dataStorage.getTrainingData(100); // Last 100 hands
+      
+      try {
+        fetch('/api/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trainingData }),
+        }).catch(() => {}); // Fire and forget
+        
+        fetch('http://localhost:4000/train', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ trainingData }),
+        }).catch(() => {}); // Fire and forget
+      } catch {}
+    }
     
     // Update AI recommendation with actual outcome if we have one
     if (currentHandId && aiRecommendation) {
@@ -368,6 +476,43 @@ function App() {
       ? (newDealerPosition + 1) % gameState.players.length
       : (newDealerPosition + 2) % gameState.players.length;
 
+    const updatedPlayers = gameState.players.map((p, idx) => {
+      let playerStack = p.stack;
+      let currentBet = 0;
+      
+      // Deduct blinds for new hand
+      if (idx === newSmallBlindPosition) {
+        playerStack -= gameState.setup.smallBlind;
+        currentBet = gameState.setup.smallBlind;
+      } else if (idx === newBigBlindPosition) {
+        playerStack -= gameState.setup.bigBlind;
+        currentBet = gameState.setup.bigBlind;
+      }
+      
+      return {
+        ...p,
+        isDealer: idx === newDealerPosition,
+        isSmallBlind: idx === newSmallBlindPosition,
+        isBigBlind: idx === newBigBlindPosition,
+        isActive: playerStack > 0,
+        currentBet: currentBet,
+        stack: playerStack,
+        actions: [],
+        handsPlayed: p.handsPlayed + 1,
+      };
+    });
+
+    // Find first non-away player after big blind for initial turn
+    let initialTurn = (newBigBlindPosition + 1) % gameState.players.length;
+    let safety = 0;
+    while (
+      safety < gameState.players.length &&
+      updatedPlayers[initialTurn].isAway
+    ) {
+      initialTurn = (initialTurn + 1) % gameState.players.length;
+      safety++;
+    }
+
     setGameState({
       ...gameState,
       currentRound: 'preflop',
@@ -380,31 +525,8 @@ function App() {
       dealerPosition: newDealerPosition,
       smallBlindPosition: newSmallBlindPosition,
       bigBlindPosition: newBigBlindPosition,
-      players: gameState.players.map((p, idx) => {
-        let playerStack = p.stack;
-        let currentBet = 0;
-        
-        // Deduct blinds for new hand
-        if (idx === newSmallBlindPosition) {
-          playerStack -= gameState.setup.smallBlind;
-          currentBet = gameState.setup.smallBlind;
-        } else if (idx === newBigBlindPosition) {
-          playerStack -= gameState.setup.bigBlind;
-          currentBet = gameState.setup.bigBlind;
-        }
-        
-        return {
-          ...p,
-          isDealer: idx === newDealerPosition,
-          isSmallBlind: idx === newSmallBlindPosition,
-          isBigBlind: idx === newBigBlindPosition,
-          isActive: playerStack > 0,
-          currentBet: currentBet,
-          stack: playerStack,
-          actions: [],
-          handsPlayed: p.handsPlayed + 1,
-        };
-      }),
+      currentPlayerTurn: initialTurn,
+      players: updatedPlayers,
     });
     setAiRecommendation(null);
     setBluffIntent(false);
@@ -496,6 +618,129 @@ function App() {
     });
   }, [gameState]);
 
+  const handleOpenPlayerSettings = useCallback((player: Player) => {
+    setSelectedPlayer(player);
+    setPlayerSettingsOpen(true);
+  }, []);
+
+  const handleUpdatePlayer = useCallback((playerId: number, updates: Partial<Player>) => {
+    if (!gameState) return;
+
+    const updatedPlayers = gameState.players.map(p => {
+      if (p.id === playerId) {
+        // If updating custom name, also save to storage
+        if (updates.customName) {
+          dataStorage.setPlayerCustomName(playerId, updates.customName);
+        }
+        return { ...p, ...updates };
+      }
+      return p;
+    });
+
+    setGameState({
+      ...gameState,
+      players: updatedPlayers
+    });
+  }, [gameState, dataStorage]);
+
+  const handleRemovePlayer = useCallback((playerId: number) => {
+    if (!gameState) return;
+    if (playerId === 0) {
+      alert('Cannot remove the hero player (You)!');
+      return;
+    }
+
+    const updatedPlayers = gameState.players.filter(p => p.id !== playerId);
+    
+    // Adjust positions if necessary
+    let newDealerPos = gameState.dealerPosition;
+    let newSBPos = gameState.smallBlindPosition;
+    let newBBPos = gameState.bigBlindPosition;
+
+    if (playerId === gameState.dealerPosition && updatedPlayers.length > 0) {
+      newDealerPos = updatedPlayers[0].id;
+    }
+    if (playerId === gameState.smallBlindPosition && updatedPlayers.length > 1) {
+      newSBPos = updatedPlayers[1].id;
+    }
+    if (playerId === gameState.bigBlindPosition && updatedPlayers.length > 2) {
+      newBBPos = updatedPlayers[2 % updatedPlayers.length].id;
+    }
+
+    setGameState({
+      ...gameState,
+      players: updatedPlayers,
+      dealerPosition: newDealerPos,
+      smallBlindPosition: newSBPos,
+      bigBlindPosition: newBBPos
+    });
+  }, [gameState]);
+
+  const handleRedoAction = useCallback((playerId: number) => {
+    if (!gameState) return;
+
+    const player = gameState.players[playerId];
+    if (!player || player.actions.length === 0) return;
+
+    // Find all players who acted after this player
+    const targetActionTime = player.actions[player.actions.length - 1].timestamp;
+    const affectedPlayers: string[] = [];
+    
+    let totalRefund = 0;
+    
+    // Restore the player's state and all subsequent players
+    const updatedPlayers = gameState.players.map(p => {
+      // Find actions after the target time
+      const actionsAfterTarget = p.actions.filter(a => a.timestamp >= targetActionTime);
+      
+      if (actionsAfterTarget.length > 0) {
+        // Calculate refund for this player
+        const playerRefund = actionsAfterTarget.reduce((sum, a) => sum + (a.amount || 0), 0);
+        totalRefund += playerRefund;
+        
+        // Track affected players
+        if (p.id !== playerId) {
+          affectedPlayers.push(p.name);
+        }
+        
+        // Check if any removed action was a fold
+        const hadFoldAction = actionsAfterTarget.some(a => a.action === 'fold');
+        
+        // Remove actions after target time
+        const remainingActions = p.actions.filter(a => a.timestamp < targetActionTime);
+        
+        return {
+          ...p,
+          stack: p.stack + playerRefund,
+          currentBet: Math.max(0, p.currentBet - playerRefund),
+          isActive: hadFoldAction ? true : p.isActive,
+          actions: remainingActions
+        };
+      }
+      return p;
+    });
+
+    // Notify user if other players were affected
+    if (affectedPlayers.length > 0) {
+      alert(`⚠️ Redo action: ${affectedPlayers.join(', ')} will also need to re-enter their actions.`);
+    }
+
+    // Adjust pot
+    const newPot = Math.max(0, gameState.pot - totalRefund);
+
+    // Set this player as the current turn
+    setGameState({
+      ...gameState,
+      players: updatedPlayers,
+      pot: newPot,
+      currentPlayerTurn: playerId,
+      bettingComplete: false
+    });
+
+    // Switch to betting phase if not already there
+    setBettingPhaseActive(true);
+  }, [gameState]);
+
   if (!gameState) {
     return <GameSetup onStartGame={initializeGame} />;
   }
@@ -518,9 +763,17 @@ function App() {
                 <Badge variant="secondary" className="text-lg px-4 py-2">
                   {gameState.currentRound.toUpperCase()}
                 </Badge>
-                <Badge variant="secondary" className="text-lg px-4 py-2">
-                  Pot: ${gameState.pot}
+                <Badge variant="secondary" className="text-lg px-4 py-2" key={`pot-badge-${gameState.pot}`}>
+                  Pot: ${gameState.pot} ({(gameState.pot / gameState.setup.bigBlind).toFixed(1)} BB)
                 </Badge>
+                <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)} className="text-gray-800">
+                  <Settings className="h-4 w-4 mr-2" />
+                  Settings
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => setGameState(null)} className="text-gray-800">
+                  <Home className="h-4 w-4 mr-2" />
+                  Main Menu
+                </Button>
               </div>
             </div>
           </CardHeader>
@@ -546,6 +799,7 @@ function App() {
                         player={player}
                         isUserPlayer={player.id === 0}
                         startingBalance={gameState.setup.startingBalance}
+                        bigBlind={gameState.setup.bigBlind}
                         allowPositionChange={true}
                         onSetDealer={handleSetDealer}
                         onSetSmallBlind={handleSetSmallBlind}
@@ -569,7 +823,10 @@ function App() {
                           }
                           return true;
                         })()}
-                        onShowInsight={(p) => { setInsightPlayer(p); setInsightOpen(true); }}
+                        onShowInsight={(p) => { setInsightPlayer(p); setInsightAllowReveal(false); setInsightOpen(true); }}
+                        onRedoAction={handleRedoAction}
+                        onOpenSettings={handleOpenPlayerSettings}
+                        currentRound={gameState.currentRound}
                       />
                     ))}
                   </div>
@@ -577,158 +834,17 @@ function App() {
 
                 <Separator className="my-4" />
 
-                {/* In-game player management */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold">Add Player</div>
-                    <div className="flex flex-col sm:flex-row gap-2">
-                      <Input
-                        placeholder="Name (optional)"
-                        value={newPlayerName}
-                        onChange={(e) => setNewPlayerName(e.target.value)}
-                        className="sm:flex-1"
-                      />
-                      <Input
-                        type="number"
-                        min={0}
-                        placeholder={`Stack (${gameState.setup.startingBalance})`}
-                        value={newPlayerStack || ''}
-                        onChange={(e) => setNewPlayerStack(parseInt(e.target.value || '0', 10))}
-                        className="sm:w-40"
-                      />
-                      <Button
-                        onClick={() => {
-                          if (!gameState) return;
-                          const nextId = gameState.players.length;
-                          const playerName = newPlayerName.trim() || `Player ${nextId + 1}`;
-                          const initialStack = newPlayerStack > 0 ? newPlayerStack : gameState.setup.startingBalance;
-                          const newPlayer: Player = {
-                            id: nextId,
-                            name: playerName,
-                            stack: initialStack,
-                            position: nextId,
-                            isDealer: false,
-                            isSmallBlind: false,
-                            isBigBlind: false,
-                            isActive: false, // joins next hand by default
-                            currentBet: 0,
-                            handsPlayed: 0,
-                            handsWon: 0,
-                            actions: [],
-                          };
-                          setGameState({ ...gameState, players: [...gameState.players, newPlayer] });
-                          setNewPlayerName('');
-                          setNewPlayerStack(0);
-                        }}
-                      >
-                        Add
-                      </Button>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      New players will sit in on the next hand.
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold">Remove Player</div>
-                    <div className="flex gap-2 items-center">
-                      <Select value={removePlayerId !== null ? String(removePlayerId) : ''} onValueChange={(v) => setRemovePlayerId(parseInt(v, 10))}>
-                        <SelectTrigger className="sm:w-64">
-                          <SelectValue placeholder="Select player" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {gameState.players
-                            .filter((p) => p.stack > 0)
-                            .map((p) => (
-                              <SelectItem key={p.id} value={String(p.id)}>
-                                {p.name} (${p.stack})
-                              </SelectItem>
-                            ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="destructive"
-                        disabled={removePlayerId === null}
-                        onClick={() => {
-                          if (!gameState || removePlayerId === null) return;
-                          const updated = gameState.players.map((p) =>
-                            p.id === removePlayerId
-                              ? { ...p, stack: 0, isActive: false, currentBet: 0 }
-                              : p
-                          );
-                          // If we removed the current player, advance turn
-                          let nextTurn = gameState.currentPlayerTurn;
-                          if (gameState.currentPlayerTurn === removePlayerId) {
-                            let idx = nextTurn;
-                            let safety = 0;
-                            do {
-                              idx = (idx + 1) % updated.length;
-                              safety++;
-                            } while (
-                              safety < updated.length &&
-                              (!updated[idx].isActive || updated[idx].stack === 0)
-                            );
-                            nextTurn = idx;
-                          }
-                          setGameState({ ...gameState, players: updated, currentPlayerTurn: nextTurn });
-                          setRemovePlayerId(null);
-                        }}
-                      >
-                        Remove
-                      </Button>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Removed players are hidden once their stack is $0.
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="text-sm font-semibold">Set Player Stack</div>
-                    <div className="flex flex-col sm:flex-row gap-2 items-center">
-                      <Select value={setStackPlayerId !== null ? String(setStackPlayerId) : ''} onValueChange={(v) => setSetStackPlayerId(parseInt(v, 10))}>
-                        <SelectTrigger className="sm:w-64">
-                          <SelectValue placeholder="Select player" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {gameState.players.map((p) => (
-                            <SelectItem key={p.id} value={String(p.id)}>
-                              {p.name} (${p.stack})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        type="number"
-                        min={0}
-                        placeholder="New stack ($)"
-                        value={setStackAmount}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setSetStackAmount(val === '' ? '' : Math.max(0, parseInt(val || '0', 10)));
-                        }}
-                        className="sm:w-40"
-                      />
-                      <Button
-                        variant="outline"
-                        disabled={setStackPlayerId === null || setStackAmount === ''}
-                        onClick={() => {
-                          if (!gameState || setStackPlayerId === null || setStackAmount === '') return;
-                          const amount = Number(setStackAmount);
-                          const updated = gameState.players.map((p) =>
-                            p.id === setStackPlayerId ? { ...p, stack: amount, isActive: amount > 0 ? p.isActive : false } : p
-                          );
-                          const prev = gameState.players.find(p => p.id === setStackPlayerId)?.stack ?? null;
-                          setGameState({ ...gameState, players: updated });
-                          dataStorage.logEvent('set_stack', { playerId: setStackPlayerId, prevStack: prev, newStack: amount });
-                          setSetStackPlayerId(null);
-                          setSetStackAmount('');
-                        }}
-                      >
-                        Set Stack
-                      </Button>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Useful for custom scenarios; does not alter pot or bets.
+                {/* Pot Display */}
+                <div className="flex justify-center my-4" key={`pot-display-${gameState.pot}`}>
+                  <div className="bg-gradient-to-r from-yellow-600 to-amber-600 text-white px-6 py-3 rounded-full shadow-lg">
+                    <div className="text-center">
+                      <div className="text-xs font-semibold uppercase tracking-wide">Current Pot</div>
+                      <div className="text-2xl font-bold">
+                        ${gameState.pot}
+                      </div>
+                      <div className="text-sm opacity-90">
+                        {(gameState.pot / gameState.setup.bigBlind).toFixed(1)} BB
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -759,6 +875,23 @@ function App() {
                       <Button onClick={advanceRound} variant="outline" disabled={gameState.currentRound === 'river'}>
                         <SkipForward className="h-4 w-4 mr-2" />
                         Next Round
+                      </Button>
+                    )}
+                    {gameState.bettingComplete && gameState.currentRound === 'river' && gameState.communityCards.length === 5 && (
+                      <Button 
+                        onClick={() => {
+                          // Open reveal dialog for first active opponent
+                          const firstOpponent = gameState.players.find(p => p.id !== 0 && p.isActive);
+                          if (firstOpponent) {
+                            setInsightPlayer(firstOpponent);
+                            setInsightAllowReveal(true);
+                            setInsightOpen(true);
+                          }
+                        }} 
+                        className="bg-gradient-to-r from-yellow-400 to-orange-500 hover:from-yellow-500 hover:to-orange-600 text-white font-bold"
+                        style={{ animation: 'bounce 1s ease-in-out 5' }}
+                      >
+                        🎯 Record Revealed Hands
                       </Button>
                     )}
                     <Button onClick={startNextHand} variant="default">
@@ -798,19 +931,44 @@ function App() {
                 <CardSelector
                   selectedCards={gameState.communityCards}
                   onCardsChange={(cards) => {
-                    setGameState({ ...gameState, communityCards: cards });
-                    setAiRecommendation(null);
+                    // Enforce card limits based on current round
+                    let maxAllowed = 5;
+                    if (gameState.currentRound === 'flop') {
+                      maxAllowed = 3;
+                    } else if (gameState.currentRound === 'turn') {
+                      maxAllowed = 4;
+                    }
+                    
+                    // Only update if within limits
+                    if (cards.length <= maxAllowed) {
+                      setGameState({ ...gameState, communityCards: cards });
+                      setAiRecommendation(null);
+                    }
                   }}
-                  maxCards={5}
-                  title="Community Cards"
+                  maxCards={gameState.currentRound === 'flop' ? 3 : gameState.currentRound === 'turn' ? 4 : 5}
+                  title={`Community Cards (${gameState.currentRound === 'flop' ? 'Max 3' : gameState.currentRound === 'turn' ? 'Max 4' : 'Max 5'})`}
                   excludeCards={gameState.userHoleCards}
                 />
               </TabsContent>
               <TabsContent value="players">
-                <PlayerStats players={gameState.players} />
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Player Statistics & Analytics</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <PlayerStatsTable 
+                      players={gameState.players.map(p => ({
+                        id: p.id,
+                        name: p.name,
+                        customName: p.customName
+                      }))}
+                    />
+                  </CardContent>
+                </Card>
               </TabsContent>
-              <TabsContent value="analytics">
-                <DataAnalytics />
+              <TabsContent value="analytics" className="space-y-4">
+                <DataAnalytics gameState={gameState} sessionStartTime={sessionStartTime || undefined} />
+                <HandHistoryLogs sessionStartTime={sessionStartTime || undefined} />
               </TabsContent>
             </Tabs>
           </div>
@@ -907,9 +1065,50 @@ function App() {
               </Card>
             )}
 
+            <HandStrength 
+              holeCards={gameState.userHoleCards} 
+              communityCards={gameState.communityCards}
+            />
+
             <AIRecommendation recommendation={aiRecommendation} loading={isAnalyzing} />
 
-            {gameState.bettingComplete ? (
+            {!gameState.bettingComplete && gameState.currentRound !== 'preflop' && (() => {
+              // Check if all active players are all-in
+              const activePlayers = gameState.players.filter(p => p.isActive && p.stack > 0);
+              if (activePlayers.length === 0) {
+                return (
+                  <Card className="bg-green-50 border-green-300">
+                    <CardContent className="py-8 text-center">
+                      <p className="text-green-800 font-semibold">
+                        ✓ All players are all-in
+                      </p>
+                      <p className="text-sm text-green-600 mt-2">
+                        No more betting - continue to next phase
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              }
+              
+              const expectedCards = gameState.currentRound === 'flop' ? 3 : gameState.currentRound === 'turn' ? 4 : 5;
+              if (gameState.communityCards.length < expectedCards) {
+                return (
+                  <Card className="bg-yellow-50 border-yellow-300">
+                    <CardContent className="py-8 text-center">
+                      <p className="text-yellow-800 font-semibold">
+                        ⚠️ Please update community cards before inputting player actions
+                      </p>
+                      <p className="text-sm text-yellow-600 mt-2">
+                        Current round: {gameState.currentRound.toUpperCase()} - Expected {expectedCards} cards, have {gameState.communityCards.length}
+                      </p>
+                    </CardContent>
+                  </Card>
+                );
+              }
+              return null;
+            })()}
+
+            {(gameState.bettingComplete && bettingPhaseActive === false) ? (
               <GamePhaseManager
                 currentRound={gameState.currentRound}
                 communityCards={gameState.communityCards}
@@ -939,20 +1138,54 @@ function App() {
                 onBackToActions={() => setGameState({ ...gameState, bettingComplete: false })}
               />
             ) : (
-              <PlayerActionPanel
-                players={gameState.players}
-                currentPlayer={gameState.currentPlayerTurn}
-                currentBet={Math.max(...gameState.players.map(p => p.currentBet))}
-                onPlayerAction={handlePlayerAction}
-                onNextPlayer={nextPlayer}
-                onConfirmRound={confirmRound}
-                canConfirmRound={gameState.players.filter(p => p.isActive).length <= 1 || 
-                  gameState.players.filter(p => p.isActive && p.stack > 0).every(p => 
-                    p.currentBet === Math.max(...gameState.players.map(pl => pl.currentBet)) || p.stack === 0
-                  )}
-                currentRound={gameState.currentRound}
-                bigBlind={gameState.setup.bigBlind}
-              />
+              // Don't show action panel if betting is complete or all active players are all-in
+              (() => {
+                const activePlayers = gameState.players.filter(p => p.isActive && p.stack > 0);
+                return activePlayers.length === 0;
+              })() ? (
+                <Card className="bg-green-50 border-green-300">
+                  <CardContent className="py-8 text-center">
+                    <p className="text-green-800 font-semibold">
+                      ✓ All players are all-in
+                    </p>
+                    <p className="text-sm text-green-600 mt-2">
+                      No more betting - continue to showdown
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : gameState.bettingComplete ? (
+                <Card className="bg-blue-50 border-blue-300">
+                  <CardContent className="py-8 text-center">
+                    <p className="text-blue-800 font-semibold">
+                      ✓ Betting round complete
+                    </p>
+                    <p className="text-sm text-blue-600 mt-2">
+                      Click "Confirm Actions → Next Phase" to advance, or use "Redo Action" to modify
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                // Check if community cards are sufficient for current round
+                gameState.currentRound !== 'preflop' && (() => {
+                  const expectedCards = gameState.currentRound === 'flop' ? 3 : gameState.currentRound === 'turn' ? 4 : 5;
+                  return gameState.communityCards.length < expectedCards;
+                })() ? null :
+                <PlayerActionPanel
+                  players={gameState.players}
+                  currentPlayer={gameState.currentPlayerTurn}
+                  currentBet={Math.max(...gameState.players.map(p => p.currentBet))}
+                  onPlayerAction={handlePlayerAction}
+                  onNextPlayer={() => nextPlayer(false)}
+                  onSkipPlayer={() => nextPlayer(true)}
+                  onConfirmRound={confirmRound}
+                  canConfirmRound={gameState.players.filter(p => p.isActive).length <= 1 || 
+                    gameState.players.filter(p => p.isActive && p.stack > 0).every(p => 
+                      p.currentBet === Math.max(...gameState.players.map(pl => pl.currentBet)) || p.stack === 0
+                    )}
+                  currentRound={gameState.currentRound}
+                  bigBlind={gameState.setup.bigBlind}
+                />
+              )
             )}
           </div>
         </div>
@@ -963,6 +1196,24 @@ function App() {
         onOpenChange={setInsightOpen}
         player={insightPlayer}
         context={{ currentRound: gameState.currentRound, communityCards: gameState.communityCards }}
+        allowRevealCards={insightAllowReveal}
+      />
+      
+      <PlayerSettingsDialog
+        open={playerSettingsOpen}
+        onOpenChange={setPlayerSettingsOpen}
+        player={selectedPlayer}
+        onUpdatePlayer={handleUpdatePlayer}
+        onRemovePlayer={handleRemovePlayer}
+        isUserPlayer={selectedPlayer?.id === 0}
+      />
+      
+      <GameSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        gameState={gameState}
+        onUpdateGameState={setGameState}
+        onLogEvent={(event, data) => dataStorage.logEvent(event, data)}
       />
     </div>
   );

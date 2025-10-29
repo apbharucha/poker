@@ -1,4 +1,4 @@
-import { Card, BettingRound, ActionType, AIRecommendation } from '@/types/poker';
+import { Card, BettingRound, ActionType, AIRecommendation, PlayerAnalytics } from '@/types/poker';
 import { getBestHand, HandRank } from '@/lib/hand-evaluator';
 import { calculatePotOdds, RANKS } from '@/lib/poker-utils';
 
@@ -15,11 +15,34 @@ interface GameContext {
   playerActions: Array<{ action: ActionType; amount?: number }>;
   bluffIntent?: boolean;
   forceBluff?: boolean; // when true, never output 'fold'; pick best bluffing line instead
+  opponentAnalytics?: Record<number, PlayerAnalytics>; // Player analytics for opponent modeling
+  opponentStacks?: number[]; // Stack sizes of active opponents for stack psychology
+  startingStack?: number; // Starting stack size for context
 }
 
 export function generateAIRecommendation(context: GameContext): AIRecommendation {
   const handStrength = calculateHandStrength(context.holeCards, context.communityCards);
-  const winProbability = estimateWinProbability(context.holeCards, context.communityCards, context.activePlayers, context.currentRound);
+  
+  // Analyze stack sizes for psychological factors
+  const stackPsych = analyzeStackPsychology(
+    context.playerStack,
+    context.opponentStacks || [],
+    context.bigBlind,
+    context.pot,
+    context.startingStack
+  );
+  
+  // Factor in opponent analytics for more accurate win probability
+  const opponentProfile = analyzeOpponentTendencies(context.opponentAnalytics, context.playerActions);
+  const winProbability = estimateWinProbability(
+    context.holeCards, 
+    context.communityCards, 
+    context.activePlayers, 
+    context.currentRound,
+    opponentProfile,
+    stackPsych
+  );
+  
   const potOdds = context.currentBet > 0 ? calculatePotOdds(context.currentBet, context.pot) : 0;
   const expectedValue = calculateExpectedValue(winProbability, context.pot, context.currentBet);
   
@@ -32,7 +55,9 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
     potOdds,
     context,
     position,
-    aggression
+    aggression,
+    opponentProfile,
+    stackPsych
   );
   
   const reasoning = generateReasoning(
@@ -42,7 +67,8 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
     potOdds,
     context,
     position,
-    aggression
+    aggression,
+    stackPsych
   );
 
   // Build a secondary recommendation (alternative line)
@@ -157,15 +183,176 @@ function evaluatePreflopStrength(holeCards: Card[]): number {
   return Math.min(strength, 0.90);
 }
 
+interface OpponentProfile {
+  avgVPIP: number;
+  avgPFR: number;
+  avgAggressionFactor: number;
+  avgBluffFrequency: number;
+  avgFoldToAggression: number;
+  tightness: 'tight' | 'loose' | 'balanced';
+  style: 'passive' | 'aggressive' | 'balanced';
+}
+
+interface StackPsychology {
+  heroStackStatus: 'short' | 'medium' | 'deep';
+  opponentStackStatus: 'short' | 'medium' | 'deep' | 'mixed';
+  heroBBs: number; // Hero stack in big blinds
+  avgOpponentBBs: number; // Average opponent stack in BBs
+  desperation: number; // 0-100, how desperate short stacks are
+  intimidation: number; // 0-100, how intimidating deep stacks are
+  shortStackPresent: boolean;
+  deepStackPresent: boolean;
+  stackPressure: 'facing-deep' | 'facing-short' | 'balanced';
+}
+
+function analyzeOpponentTendencies(
+  analytics: Record<number, PlayerAnalytics> | undefined,
+  actions: Array<{ action: ActionType; amount?: number }>
+): OpponentProfile {
+  if (!analytics || Object.keys(analytics).length === 0) {
+    // Default balanced profile
+    return {
+      avgVPIP: 25,
+      avgPFR: 15,
+      avgAggressionFactor: 1.5,
+      avgBluffFrequency: 30,
+      avgFoldToAggression: 50,
+      tightness: 'balanced',
+      style: 'balanced'
+    };
+  }
+  
+  const players = Object.values(analytics);
+  const avgVPIP = players.reduce((sum, p) => sum + p.vpip, 0) / players.length;
+  const avgPFR = players.reduce((sum, p) => sum + p.pfr, 0) / players.length;
+  const avgAggressionFactor = players.reduce((sum, p) => sum + p.aggressionFactor, 0) / players.length;
+  const avgBluffFrequency = players.reduce((sum, p) => sum + p.bluffFrequency, 0) / players.length;
+  const avgFoldToAggression = players.reduce((sum, p) => sum + p.foldToAggression, 0) / players.length;
+  
+  const tightness = avgVPIP < 20 ? 'tight' : avgVPIP > 30 ? 'loose' : 'balanced';
+  const style = avgAggressionFactor > 2 || avgPFR > 18 ? 'aggressive' : avgAggressionFactor < 1 ? 'passive' : 'balanced';
+  
+  return {
+    avgVPIP,
+    avgPFR,
+    avgAggressionFactor,
+    avgBluffFrequency,
+    avgFoldToAggression,
+    tightness,
+    style
+  };
+}
+
+function analyzeStackPsychology(
+  heroStack: number,
+  opponentStacks: number[],
+  bigBlind: number,
+  pot: number,
+  startingStack?: number
+): StackPsychology {
+  const heroBBs = heroStack / bigBlind;
+  const opponentBBs = opponentStacks.map(s => s / bigBlind);
+  const avgOpponentBBs = opponentBBs.length > 0 ? opponentBBs.reduce((a, b) => a + b, 0) / opponentBBs.length : 0;
+  
+  // Classify hero stack
+  const heroStackStatus: 'short' | 'medium' | 'deep' = 
+    heroBBs < 20 ? 'short' : heroBBs < 50 ? 'medium' : 'deep';
+  
+  // Classify opponent stacks
+  const shortStackPresent = opponentBBs.some(bb => bb < 20);
+  const deepStackPresent = opponentBBs.some(bb => bb > 50);
+  
+  let opponentStackStatus: 'short' | 'medium' | 'deep' | 'mixed';
+  if (opponentBBs.length === 0) {
+    opponentStackStatus = 'medium';
+  } else if (shortStackPresent && deepStackPresent) {
+    opponentStackStatus = 'mixed';
+  } else if (avgOpponentBBs < 20) {
+    opponentStackStatus = 'short';
+  } else if (avgOpponentBBs > 50) {
+    opponentStackStatus = 'deep';
+  } else {
+    opponentStackStatus = 'medium';
+  }
+  
+  // Calculate desperation (higher when short-stacked, especially with losses)
+  let desperation = 0;
+  if (heroBBs < 20) {
+    desperation = 50 + (20 - heroBBs) * 2.5; // 50-100 range for short stacks
+    // Increase desperation if lost significant chips from starting stack
+    if (startingStack && heroStack < startingStack * 0.5) {
+      desperation = Math.min(100, desperation + 20);
+    }
+  } else if (heroBBs < 30) {
+    desperation = 20 + (30 - heroBBs) * 2; // 20-40 range for medium-short
+  }
+  
+  // Calculate intimidation (how threatening deep stacks are)
+  let intimidation = 0;
+  if (deepStackPresent) {
+    const maxOpponentBBs = Math.max(...opponentBBs);
+    if (maxOpponentBBs > heroBBs * 2) {
+      intimidation = 40 + Math.min(40, (maxOpponentBBs / heroBBs - 2) * 10);
+    } else if (maxOpponentBBs > heroBBs) {
+      intimidation = 20 + (maxOpponentBBs / heroBBs - 1) * 20;
+    }
+  }
+  
+  // Determine stack pressure situation
+  let stackPressure: 'facing-deep' | 'facing-short' | 'balanced';
+  if (avgOpponentBBs > heroBBs * 1.5) {
+    stackPressure = 'facing-deep';
+  } else if (avgOpponentBBs < heroBBs * 0.67) {
+    stackPressure = 'facing-short';
+  } else {
+    stackPressure = 'balanced';
+  }
+  
+  return {
+    heroStackStatus,
+    opponentStackStatus,
+    heroBBs,
+    avgOpponentBBs,
+    desperation,
+    intimidation,
+    shortStackPresent,
+    deepStackPresent,
+    stackPressure
+  };
+}
+
 function estimateWinProbability(
   holeCards: Card[],
   communityCards: Card[],
   activePlayers: number,
-  round: BettingRound
+  round: BettingRound,
+  opponentProfile?: OpponentProfile,
+  stackPsych?: StackPsychology
 ): number {
   const baseStrength = calculateHandStrength(holeCards, communityCards);
   
-  const opponentAdjustment = 1 - ((activePlayers - 1) * 0.08);
+  let opponentAdjustment = 1 - ((activePlayers - 1) * 0.08);
+  
+  // Adjust based on opponent tendencies
+  if (opponentProfile) {
+    // Against tight players, your marginal hands have more value (they fold more)
+    if (opponentProfile.tightness === 'tight') {
+      opponentAdjustment *= 1.05; // Boost win probability slightly
+    }
+    // Against loose players, your marginal hands have less value
+    else if (opponentProfile.tightness === 'loose') {
+      opponentAdjustment *= 0.95;
+    }
+    
+    // Against aggressive players, reduce confidence in marginal holdings
+    if (opponentProfile.style === 'aggressive' && baseStrength < 0.6) {
+      opponentAdjustment *= 0.93;
+    }
+    // Against passive players, marginal hands are safer
+    else if (opponentProfile.style === 'passive') {
+      opponentAdjustment *= 1.03;
+    }
+  }
   
   let roundMultiplier = 1.0;
   if (round === 'preflop') roundMultiplier = 0.85;
@@ -173,7 +360,29 @@ function estimateWinProbability(
   else if (round === 'turn') roundMultiplier = 0.95;
   else if (round === 'river') roundMultiplier = 1.0;
   
-  const winProb = baseStrength * opponentAdjustment * roundMultiplier * 100;
+  // Adjust for stack psychology
+  let stackAdjustment = 1.0;
+  if (stackPsych) {
+    // Short stacks are more likely to make desperate moves and bluff
+    // Against short stacks with decent hands, your win rate increases slightly
+    if (stackPsych.shortStackPresent && baseStrength >= 0.50) {
+      stackAdjustment *= 1.03; // +3% against short stacks with decent holdings
+    }
+    
+    // Deep stacks can apply more pressure and see more streets
+    // Reduce confidence slightly against deep stacks with marginal hands
+    if (stackPsych.deepStackPresent && baseStrength < 0.60) {
+      stackAdjustment *= 0.97; // -3% against deep stacks with marginal holdings
+    }
+    
+    // When you're short-stacked, desperation affects perception
+    // But actually marginal hands decrease in value (you need to pick better spots)
+    if (stackPsych.heroStackStatus === 'short' && baseStrength < 0.55) {
+      stackAdjustment *= 0.95; // Be more conservative when short
+    }
+  }
+  
+  const winProb = baseStrength * opponentAdjustment * stackAdjustment * roundMultiplier * 100;
   
   return Math.max(5, Math.min(95, winProb));
 }
@@ -204,7 +413,9 @@ function determineOptimalAction(
   potOdds: number,
   context: GameContext,
   _position: string,
-  _aggression: number
+  _aggression: number,
+  opponentProfile?: OpponentProfile,
+  stackPsych?: StackPsychology
 ): { type: ActionType; amount?: number } {
   // Note: context.currentBet should represent the amount to call for the hero
   const callAmount = context.currentBet;
@@ -212,13 +423,150 @@ function determineOptimalAction(
   const potRaise = Math.floor(context.pot * 0.75);
   const noBetToCall = callAmount === 0;
 
+  // ========== STACK PSYCHOLOGY ADJUSTMENTS ==========
+  // Comprehensive stack-based strategic adjustments
+  let stackSizingMultiplier = 1.0;
+  let stackBasedBluffIncentive = 0; // -100 to +100
+  let stackBasedCallThreshold = context.bigBlind * 2; // Base calling threshold
+  
+  if (stackPsych) {
+    // === HERO IS SHORT-STACKED (< 20 BBs) ===
+    if (stackPsych.heroStackStatus === 'short') {
+      // Short stacks need to pick spots carefully and commit when they do
+      // Increase bet sizes when betting (all-or-nothing mentality)
+      stackSizingMultiplier = 1.3;
+      
+      // Push/fold strategy: More willing to go all-in with decent hands
+      if (handStrength >= 0.50 && context.playerStack < context.bigBlind * 15) {
+        // Very short: shove-or-fold mode with any decent hand
+        if (!noBetToCall && callAmount >= context.playerStack * 0.5) {
+          // Already committed, might as well shove
+          return { type: 'all-in' };
+        }
+      }
+      
+      // Tighter calling ranges when short (need better spots)
+      stackBasedCallThreshold *= 0.75;
+      
+      // Less bluffing when short (can't afford to waste chips)
+      stackBasedBluffIncentive -= 30;
+    }
+    
+    // === HERO IS DEEP-STACKED (> 50 BBs) ===
+    else if (stackPsych.heroStackStatus === 'deep') {
+      // Deep stacks can apply more pressure and play more streets
+      // Use stack leverage to apply pressure
+      stackSizingMultiplier = 0.9; // Slightly smaller bets to get calls
+      
+      // More willing to call with drawing hands (implied odds)
+      stackBasedCallThreshold *= 1.2;
+      
+      // Can afford to bluff more
+      stackBasedBluffIncentive += 20;
+    }
+    
+    // === FACING SHORT-STACKED OPPONENTS ===
+    if (stackPsych.shortStackPresent) {
+      // Short stacks are more likely to:
+      // 1. Shove with marginal hands (desperation)
+      // 2. Call with weaker hands (pot committed)
+      // 3. Bluff more frequently (trying to rebuild)
+      
+      // With strong hands, bet bigger against short stacks
+      // They're more likely to call out of desperation
+      if (handStrength >= 0.65 && winProbability >= 65) {
+        stackSizingMultiplier *= 1.25; // +25% sizing for value
+      }
+      
+      // Be more cautious calling short stack shoves without premium
+      // They're often desperate and gambling
+      if (!noBetToCall && callAmount >= context.pot * 0.8) {
+        // Facing a big bet from short stack - they're likely committed or bluffing
+        if (handStrength < 0.60) {
+          // Tighter calls against short stack aggression
+          stackBasedCallThreshold *= 0.80;
+        }
+      }
+      
+      // Bluff less against short stacks (they call lighter out of desperation)
+      stackBasedBluffIncentive -= 15;
+    }
+    
+    // === FACING DEEP-STACKED OPPONENTS ===
+    if (stackPsych.deepStackPresent || stackPsych.stackPressure === 'facing-deep') {
+      // Deep stacks can:
+      // 1. Apply maximum pressure on multiple streets
+      // 2. Make bigger bets to push you off marginal hands
+      // 3. Have better implied odds
+      
+      // With strong hands, extract value over multiple streets
+      // Smaller bets to keep them in
+      if (handStrength >= 0.70 && context.currentRound !== 'river') {
+        stackSizingMultiplier *= 0.85; // -15% to string them along
+      }
+      
+      // Be more careful with marginal hands against deep stacks
+      // They can punish you on later streets
+      if (handStrength < 0.55 && winProbability < 60) {
+        stackBasedCallThreshold *= 0.85; // Tighter calls
+      }
+      
+      // Deep stacks are intimidating - bluff slightly less
+      // They can afford to call you down
+      stackBasedBluffIncentive -= 10;
+    }
+    
+    // === STACK RATIO EXPLOITATION ===
+    // When you have a stack advantage, use it
+    if (stackPsych.stackPressure === 'facing-short') {
+      // You're the big stack - you can bully
+      stackBasedBluffIncentive += 25;
+      
+      // Apply pressure with medium-strength hands
+      if (handStrength >= 0.45 && handStrength < 0.65) {
+        stackSizingMultiplier *= 1.15; // Bigger bets to pressure short stacks
+      }
+    }
+    
+    // === DESPERATION FACTOR ===
+    // When hero is desperate (short and losing), adjust strategy
+    if (stackPsych.desperation > 50) {
+      // High desperation: need to make something happen
+      // BUT be smart about it - don't spew
+      
+      // More willing to gamble with decent holdings
+      if (handStrength >= 0.40 && !noBetToCall && callAmount <= context.playerStack) {
+        // Call wider when desperate (need to double up)
+        stackBasedCallThreshold *= 1.3;
+      }
+      
+      // More aggressive with any playable hand
+      if (handStrength >= 0.35 && noBetToCall) {
+        stackBasedBluffIncentive += 20;
+      }
+    }
+    
+    // === INTIMIDATION FACTOR ===
+    // When facing much bigger stacks, play tighter
+    if (stackPsych.intimidation > 40) {
+      // Being intimidated - tighten up
+      stackBasedCallThreshold *= 0.90;
+      stackBasedBluffIncentive -= 15;
+    }
+  }
+  
+  // Apply stack-based bluff adjustments to context bluffing logic
+  const enhancedBluffIntent = context.bluffIntent && stackBasedBluffIncentive > -50;
+  const shouldReduceBluffSize = stackBasedBluffIncentive < -20;
+
   // Preflop-specific strategy adjustments to avoid overly tight folds
   if (context.currentRound === 'preflop') {
     // Premium hands: open/3-bet aggressively
     if (handStrength >= 0.75) {
-      const raiseAmount = Math.min(context.playerStack, Math.max(3 * context.bigBlind, potRaise));
-      if (raiseAmount >= context.playerStack) return { type: 'all-in' };
-      return { type: 'raise', amount: Math.max(3 * context.bigBlind, raiseAmount) };
+      const betAmount = Math.min(context.playerStack, Math.max(3 * context.bigBlind, potRaise));
+      if (betAmount >= context.playerStack) return { type: 'all-in' };
+      // Use 'raise' preflop even when opening (since blinds are posted)
+      return { type: 'raise', amount: Math.max(3 * context.bigBlind, betAmount) };
     }
 
     // Strong hands: raise, especially if no raise to you
@@ -266,13 +614,22 @@ function determineOptimalAction(
 
   // Bluff intent: bias towards aggression; if forceBluff, never fold at any street
   if (context.bluffIntent) {
+    // Against tight opponents, bluff more aggressively (they fold more)
+    const bluffMultiplier = opponentProfile?.tightness === 'tight' ? 1.2 : 
+                           opponentProfile?.tightness === 'loose' ? 0.85 : 1.0;
+    
+    // Against high fold-to-aggression opponents, smaller bluffs work
+    const sizingFactor = opponentProfile && opponentProfile.avgFoldToAggression > 60 ? 0.5 : 0.7;
+    
     if (context.forceBluff) {
       if (noBetToCall) {
-        const raiseAmount = Math.max(minRaise, Math.floor(context.pot * 0.5));
-        return { type: 'raise', amount: Math.min(raiseAmount, context.playerStack) };
+        const betAmount = Math.max(minRaise, Math.floor(context.pot * (0.5 * bluffMultiplier)));
+        // Postflop with no bet: use 'bet', not 'raise'
+        const actionType = context.currentRound === 'preflop' ? 'raise' : 'bet';
+        return { type: actionType, amount: Math.min(betAmount, context.playerStack) };
       }
       // Facing a bet: choose raise or shove based on stack/pot
-      const raiseAmount = Math.max(minRaise, Math.floor(Math.max(context.pot * 0.7, callAmount * 2.5)));
+      const raiseAmount = Math.max(minRaise, Math.floor(Math.max(context.pot * sizingFactor, callAmount * 2.5)));
       if (raiseAmount >= context.playerStack || context.playerStack <= context.pot) {
         return { type: 'all-in' };
       }
@@ -281,8 +638,9 @@ function determineOptimalAction(
 
     // Non-forced bluff bias (allowed to fold later if terrible)
     if (noBetToCall) {
-      const raiseAmount = Math.max(minRaise, Math.floor(context.pot * 0.6));
-      return { type: 'raise', amount: Math.min(raiseAmount, context.playerStack) };
+      const betAmount = Math.max(minRaise, Math.floor(context.pot * 0.6));
+      const actionType = context.currentRound === 'preflop' ? 'raise' : 'bet';
+      return { type: actionType, amount: Math.min(betAmount, context.playerStack) };
     }
     if (callAmount <= context.bigBlind * 4) {
       const raiseAmount = Math.max(minRaise, Math.floor(context.pot * 0.7));
@@ -300,7 +658,20 @@ function determineOptimalAction(
   }
   
   if (winProbability >= 80 || handStrength >= 0.80) {
-    const raiseAmount = Math.max(minRaise, potRaise);
+    if (noBetToCall) {
+      // No bet yet: use 'bet' postflop, 'raise' preflop (blinds count as bets)
+      let betAmount = Math.max(minRaise, potRaise);
+      // Apply stack psychology sizing
+      betAmount = Math.floor(betAmount * stackSizingMultiplier);
+      if (betAmount >= context.playerStack) {
+        return { type: 'all-in' };
+      }
+      const actionType = context.currentRound === 'preflop' ? 'raise' : 'bet';
+      return { type: actionType, amount: Math.min(betAmount, context.playerStack) };
+    }
+    // Facing a bet: raise
+    let raiseAmount = Math.max(minRaise, potRaise);
+    raiseAmount = Math.floor(raiseAmount * stackSizingMultiplier);
     if (raiseAmount >= context.playerStack) {
       return { type: 'all-in' };
     }
@@ -309,15 +680,18 @@ function determineOptimalAction(
   
   if (winProbability >= 60 || handStrength >= 0.65) {
     if (noBetToCall) {
-      const raiseAmount = Math.floor(context.pot * 0.5);
-      return { type: 'raise', amount: Math.max(context.bigBlind, Math.min(raiseAmount, context.playerStack)) };
+      let betAmount = Math.floor(context.pot * 0.5);
+      betAmount = Math.floor(betAmount * stackSizingMultiplier);
+      const actionType = context.currentRound === 'preflop' ? 'raise' : 'bet';
+      return { type: actionType, amount: Math.max(context.bigBlind, Math.min(betAmount, context.playerStack)) };
     }
     
     if (potOdds > 0 && winProbability > potOdds) {
       return { type: 'call', amount: callAmount };
     }
     
-    if (callAmount <= context.bigBlind * 3) {
+    // Use stack-based call threshold instead of fixed amount
+    if (callAmount <= Math.max(context.bigBlind * 3, stackBasedCallThreshold)) {
       return { type: 'call', amount: callAmount };
     }
     
@@ -329,7 +703,12 @@ function determineOptimalAction(
       return { type: 'check' };
     }
     
-    if (potOdds > 0 && winProbability > potOdds && callAmount <= context.bigBlind * 2) {
+    // Against passive players, call wider with marginal hands
+    let callThreshold = opponentProfile?.style === 'passive' ? context.bigBlind * 2.5 : context.bigBlind * 2;
+    // Factor in stack-based calling adjustments
+    callThreshold = Math.max(callThreshold, stackBasedCallThreshold);
+    
+    if (potOdds > 0 && winProbability > potOdds && callAmount <= callThreshold) {
       return { type: 'call', amount: callAmount };
     }
     
@@ -354,7 +733,8 @@ function generateReasoning(
   potOdds: number,
   context: GameContext,
   _position: string,
-  _aggression: number
+  _aggression: number,
+  stackPsych?: StackPsychology
 ): string {
   const handQuality = handStrength >= 0.75 ? 'strong' : handStrength >= 0.50 ? 'moderate' : handStrength >= 0.30 ? 'weak' : 'very weak';
   
@@ -371,6 +751,11 @@ function generateReasoning(
     reasoning += `Calling is justified based on pot odds and your hand's potential. `;
     if (potOdds > 0) {
       reasoning += `Your win probability (${winProbability.toFixed(1)}%) exceeds the pot odds (${potOdds.toFixed(1)}%).`;
+    }
+  } else if (action.type === 'bet') {
+    reasoning += `Betting is recommended to build the pot and put pressure on opponents. `;
+    if (action.amount) {
+      reasoning += `A bet of $${action.amount} represents good value based on pot size.`;
     }
   } else if (action.type === 'raise') {
     reasoning += `Raising puts pressure on opponents and builds the pot with your strong hand. `;
@@ -400,6 +785,42 @@ function generateReasoning(
       ? ' You chose to continue the bluff; the suggestion maximizes fold equity with aggressive sizing.'
       : ' You indicated a bluff intent; the line is biased toward aggression to maximize fold equity.';
   }
+  
+  // Add stack psychology insights
+  if (stackPsych) {
+    const heroBBs = stackPsych.heroBBs.toFixed(1);
+    const avgOppBBs = stackPsych.avgOpponentBBs.toFixed(1);
+    
+    // Hero stack status insights
+    if (stackPsych.heroStackStatus === 'short') {
+      reasoning += ` You're short-stacked (${heroBBs} BBs) - pick your spots carefully.`;
+      if (stackPsych.desperation > 60) {
+        reasoning += ` High desperation: need to double up, but avoid spewing chips.`;
+      }
+    } else if (stackPsych.heroStackStatus === 'deep') {
+      reasoning += ` You have a deep stack (${heroBBs} BBs) - use it to apply pressure.`;
+    }
+    
+    // Opponent stack insights
+    if (stackPsych.shortStackPresent) {
+      reasoning += ` Short-stacked opponents present - they're more likely to call/shove out of desperation.`;
+      if (action.type === 'bet' || action.type === 'raise') {
+        reasoning += ` Sized larger for value against short stacks who may feel pot-committed.`;
+      }
+    }
+    
+    if (stackPsych.stackPressure === 'facing-deep') {
+      reasoning += ` Facing deep-stacked opponents (avg ${avgOppBBs} BBs) - they can apply pressure on multiple streets.`;
+    } else if (stackPsych.stackPressure === 'facing-short') {
+      reasoning += ` You have the stack advantage - bully short stacks with aggression.`;
+    }
+    
+    // Intimidation warnings
+    if (stackPsych.intimidation > 50) {
+      reasoning += ` Facing much bigger stacks - play tighter and avoid marginal spots.`;
+    }
+  }
+  
   return reasoning;
 }
 
@@ -416,35 +837,40 @@ function buildSecondary(
   });
 
   if (context.bluffIntent) {
-    if (primary.type === 'raise') {
-      // Alternative: shove or a different raise sizing
+    if (primary.type === 'bet' || primary.type === 'raise') {
+      // Alternative: shove or a different sizing
       if (primary.amount && primary.amount < context.playerStack) {
         return alt('all-in', undefined, 'Bluff line alternative: maximize fold equity with a shove.');
       }
       const r = Math.max(context.bigBlind * 3, Math.floor(context.pot * 0.5));
-      return alt('raise', Math.min(context.playerStack, r), 'Bluff line alternative: vary sizing to maintain pressure.');
+      const actionType = noBetToCall && context.currentRound !== 'preflop' ? 'bet' : 'raise';
+      return alt(actionType, Math.min(context.playerStack, r), 'Bluff line alternative: vary sizing to maintain pressure.');
     }
     if (primary.type === 'check' || primary.type === 'call') {
       const r = Math.max(context.bigBlind * 3, Math.floor(context.pot * 0.6));
-      return alt('raise', Math.min(context.playerStack, r), 'Bluff line alternative: convert to a bluff raise.');
+      const actionType = noBetToCall && context.currentRound !== 'preflop' ? 'bet' : 'raise';
+      return alt(actionType, Math.min(context.playerStack, r), `Bluff line alternative: convert to a bluff ${actionType}.`);
     }
     if (primary.type === 'fold') {
       const r = Math.max(context.bigBlind * 3, Math.floor(context.pot * 0.6));
-      return alt(noBetToCall ? 'raise' : 'all-in', noBetToCall ? Math.min(context.playerStack, r) : undefined, 'Bluff line alternative: apply maximum pressure.');
+      const actionType = noBetToCall && context.currentRound !== 'preflop' ? 'bet' : 'all-in';
+      return alt(actionType, noBetToCall ? Math.min(context.playerStack, r) : undefined, 'Bluff line alternative: apply maximum pressure.');
     }
   }
 
   // Non-bluff secondary: provide a more conservative/aggressive counterpart
-  if (primary.type === 'raise') {
+  if (primary.type === 'bet' || primary.type === 'raise') {
     return alt('call', undefined, 'Alternative: take a lower-variance line by calling.');
   }
   if (primary.type === 'call') {
     const r = Math.max(context.bigBlind * 2, Math.floor(context.pot * 0.4));
-    return alt('raise', Math.min(context.playerStack, r), 'Alternative: seize initiative with a value/protection raise.');
+    const actionType = noBetToCall && context.currentRound !== 'preflop' ? 'bet' : 'raise';
+    return alt(actionType, Math.min(context.playerStack, r), `Alternative: seize initiative with a value/protection ${actionType}.`);
   }
   if (primary.type === 'check') {
     const r = Math.max(context.bigBlind * 2, Math.floor(context.pot * 0.33));
-    return alt('raise', Math.min(context.playerStack, r), 'Alternative: apply pressure with a small probe bet.');
+    const actionType = context.currentRound === 'preflop' ? 'raise' : 'bet';
+    return alt(actionType, Math.min(context.playerStack, r), 'Alternative: apply pressure with a small probe bet.');
   }
   if (primary.type === 'fold') {
     return noBetToCall ? alt('check', undefined, 'Alternative: check back for free equity realization.') : alt('call', undefined, 'Alternative: call if pot odds are close.');
@@ -454,7 +880,7 @@ function buildSecondary(
 }
 
 function isAggressive(action: ActionType): boolean {
-  return action === 'raise' || action === 'all-in';
+  return action === 'bet' || action === 'raise' || action === 'all-in';
 }
 
 function evaluateBoardThreat(community: Card[]): number {
@@ -593,24 +1019,178 @@ function detectStrongBluffOpportunity({
   return null;
 }
 
-export function generatePlayerInsight(playerActions: Array<{ action: ActionType; amount?: number }>, context: any): { summary: string; likelyRange: string; confidence: number } {
-  // Very coarse heuristic
-  const raises = playerActions.filter(a => a.action === 'raise' || a.action === 'all-in').length;
+export function generatePlayerInsight(
+  playerActions: Array<{ action: ActionType; amount?: number }>, 
+  context: any,
+  playerAnalytics?: PlayerAnalytics
+): {
+  summary: string; 
+  likelyRange: string; 
+  confidence: number;
+  possibleHands: string[];
+  bluffLikelihood: number;
+  bluffReasoning: string;
+  detailedAnalysis: string;
+} {
+  const raises = playerActions.filter(a => a.action === 'raise' || a.action === 'bet' || a.action === 'all-in').length;
   const calls = playerActions.filter(a => a.action === 'call').length;
   const checks = playerActions.filter(a => a.action === 'check').length;
   const folds = playerActions.filter(a => a.action === 'fold').length;
+  const allIns = playerActions.filter(a => a.action === 'all-in').length;
 
   let likelyRange = 'Wide, mixed strength';
   let confidence = 40;
-  if (raises >= 2) { likelyRange = 'Strong made hands (TT+, AQ+) or strong draws'; confidence = 65; }
-  else if (raises === 1 && calls >= 1) { likelyRange = 'Top pairs, draws, mid pairs'; confidence = 55; }
-  else if (calls >= 2) { likelyRange = 'Draws, mid/low pairs, suited connectors'; confidence = 50; }
-  else if (checks > 1) { likelyRange = 'Marginal/weak showdown hands, backdoor draws'; confidence = 45; }
-  if (folds > 0) confidence = Math.max(30, confidence - 10);
-
+  let possibleHands: string[] = [];
+  let bluffLikelihood = playerAnalytics?.bluffFrequency || 30; // Use tracked bluff frequency or baseline
+  let suspiciousActions: string[] = [];
+  
+  // Adjust initial assessments based on player analytics
+  if (playerAnalytics && playerAnalytics.handsTracked > 10) {
+    // Player has enough tracked hands for reliable stats
+    if (playerAnalytics.vpip < 20 && playerAnalytics.pfr < 15) {
+      // Tight player - when they act, it's more meaningful
+      confidence += 10;
+      suspiciousActions.push(`tight player (VPIP ${playerAnalytics.vpip}%)`);
+    } else if (playerAnalytics.vpip > 35) {
+      // Loose player - actions less reliable
+      confidence -= 5;
+      suspiciousActions.push(`loose player (VPIP ${playerAnalytics.vpip}%)`);
+    }
+    
+    // Aggression factor influences bluff likelihood
+    if (playerAnalytics.aggressionFactor > 2.5) {
+      bluffLikelihood += 10;
+      suspiciousActions.push(`high aggression factor (${playerAnalytics.aggressionFactor.toFixed(1)})`);
+    } else if (playerAnalytics.aggressionFactor < 1) {
+      bluffLikelihood -= 10;
+    }
+  }
+  
   const street = context?.currentRound || 'unknown';
-  const summary = `Based on ${street} actions: raises=${raises}, calls=${calls}. Likely range: ${likelyRange}.`;
-  return { summary, likelyRange, confidence };
+  const communityCards = context?.communityCards || [];
+  const hasFlushDraw = communityCards.length >= 3;
+  const hasStraightPossible = communityCards.length >= 3;
+  
+  // Analyze betting patterns
+  if (raises >= 3) {
+    likelyRange = 'Premium hands (AA, KK, QQ) or very strong made hands';
+    possibleHands = ['Pocket Aces', 'Pocket Kings', 'Pocket Queens', 'Top Set', 'Straight', 'Flush'];
+    confidence = 75;
+    bluffLikelihood = 15;
+  } else if (raises === 2) {
+    likelyRange = 'Strong hands (TT+, AK, AQ) or strong draws';
+    possibleHands = ['Overpair', 'Top Pair Top Kicker', 'Two Pair', 'Flush Draw', 'Straight Draw'];
+    confidence = 65;
+    bluffLikelihood = 25;
+  } else if (raises === 1 && calls >= 2) {
+    likelyRange = 'Top pairs, draws, or mid pairs';
+    possibleHands = ['Top Pair', 'Pocket Pair', 'Flush Draw', 'Straight Draw', 'Middle Pair'];
+    confidence = 55;
+    bluffLikelihood = 35;
+    if (calls > raises) suspiciousActions.push('passive play after initial aggression');
+  } else if (raises === 1 && calls === 0) {
+    likelyRange = 'Polarized: very strong OR bluffing';
+    possibleHands = ['Strong Made Hand', 'Overpair', 'Set', 'Air/Bluff', 'Weak Draw'];
+    confidence = 50;
+    bluffLikelihood = 45;
+    suspiciousActions.push('single aggressive action with no follow-up');
+  } else if (calls >= 3) {
+    likelyRange = 'Drawing hands or weak made hands';
+    possibleHands = ['Flush Draw', 'Straight Draw', 'Weak Pair', 'Ace High', 'Gutshot'];
+    confidence = 55;
+    bluffLikelihood = 40;
+    suspiciousActions.push('consistent calling suggests drawing or pot control');
+  } else if (checks >= 2 && raises === 0) {
+    likelyRange = 'Weak showdown value or marginal hands';
+    possibleHands = ['Weak Pair', 'Ace High', 'King High', 'Backdoor Draw', 'Nothing'];
+    confidence = 50;
+    bluffLikelihood = 50;
+    suspiciousActions.push('excessive checking indicates weakness or trap');
+  } else if (allIns > 0) {
+    likelyRange = 'Polarized: nuts or complete bluff';
+    possibleHands = ['Top Set', 'Straight', 'Flush', 'Overpair', 'Total Bluff'];
+    confidence = 45;
+    bluffLikelihood = street === 'river' ? 55 : 35;
+    suspiciousActions.push('all-in move is highly polarizing');
+  }
+  
+  // Adjust bluff likelihood based on street
+  if (street === 'preflop') {
+    bluffLikelihood = Math.max(20, bluffLikelihood - 15);
+  } else if (street === 'river') {
+    bluffLikelihood = Math.min(70, bluffLikelihood + 15);
+    if (raises > 0 && calls === 0) {
+      suspiciousActions.push('river aggression without prior commitment');
+      bluffLikelihood = Math.min(75, bluffLikelihood + 10);
+    }
+  }
+  
+  // Check-raise detection
+  const hasCheckRaise = playerActions.findIndex(a => a.action === 'check') < playerActions.findIndex(a => a.action === 'raise' || a.action === 'bet');
+  if (hasCheckRaise && playerActions.length >= 2) {
+    suspiciousActions.push('check-raise detected - could be trap or bluff');
+    bluffLikelihood = 40; // balanced
+  }
+  
+  // Sizing tells
+  const largeBets = playerActions.filter(a => (a.action === 'raise' || a.action === 'bet') && a.amount && a.amount > 50).length;
+  if (largeBets >= 2) {
+    suspiciousActions.push('oversized bets may indicate polarization');
+    bluffLikelihood = Math.min(65, bluffLikelihood + 10);
+  }
+  
+  // Generate bluff reasoning
+  let bluffReasoning = '';
+  if (bluffLikelihood >= 60) {
+    bluffReasoning = `High bluff likelihood (${bluffLikelihood}%). `;
+    if (suspiciousActions.length > 0) {
+      bluffReasoning += `Suspicious actions: ${suspiciousActions.join('; ')}. `;
+    }
+    bluffReasoning += `Betting pattern suggests polarized range with significant bluff component.`;
+  } else if (bluffLikelihood >= 40) {
+    bluffReasoning = `Moderate bluff likelihood (${bluffLikelihood}%). `;
+    if (suspiciousActions.length > 0) {
+      bluffReasoning += `Notable actions: ${suspiciousActions.join('; ')}. `;
+    }
+    bluffReasoning += `Actions indicate mixed range of value and bluffs.`;
+  } else {
+    bluffReasoning = `Low bluff likelihood (${bluffLikelihood}%). `;
+    bluffReasoning += `Betting pattern suggests genuine strength. `;
+    if (suspiciousActions.length > 0) {
+      bluffReasoning += `However: ${suspiciousActions.join('; ')}.`;
+    }
+  }
+  
+  // Generate detailed analysis
+  let detailedAnalysis = `On ${street.toUpperCase()}: ${raises} raises/bets, ${calls} calls, ${checks} checks. `;
+  detailedAnalysis += `Player shows ${raises + allIns >= 2 ? 'strong aggression' : raises + allIns === 1 ? 'selective aggression' : 'passive play'}. `;
+  
+  if (hasFlushDraw && communityCards.length >= 3) {
+    const suits = communityCards.map((c: any) => c.suit);
+    const suitCounts = new Map<string, number>();
+    suits.forEach((s: string) => suitCounts.set(s, (suitCounts.get(s) || 0) + 1));
+    const maxSuit = Math.max(...Array.from(suitCounts.values()));
+    if (maxSuit >= 3) {
+      detailedAnalysis += `Board shows flush draw potential (${maxSuit} suited cards). `;
+      if (raises > 0) {
+        possibleHands.push('Flush Draw');
+      }
+    }
+  }
+  
+  detailedAnalysis += `Range confidence: ${confidence}%. Most likely holdings: ${possibleHands.slice(0, 3).join(', ')}.`;
+  
+  const summary = `${likelyRange}. Actions suggest ${bluffLikelihood >= 50 ? 'possible bluff' : 'likely value'}.`;
+  
+  return { 
+    summary, 
+    likelyRange, 
+    confidence,
+    possibleHands,
+    bluffLikelihood,
+    bluffReasoning,
+    detailedAnalysis
+  };
 }
 
 function summarizeActions(actions: Array<{ action: ActionType; amount?: number }>) {
