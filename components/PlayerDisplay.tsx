@@ -11,6 +11,8 @@ interface PlayerDisplayProps {
   onSetSmallBlind?: (playerId: number) => void;
   onSetBigBlind?: (playerId: number) => void;
   allowPositionChange?: boolean;
+  canShowInsight?: boolean;
+  onShowInsight?: (player: Player) => void;
 }
 
 export function PlayerDisplay({ 
@@ -20,7 +22,9 @@ export function PlayerDisplay({
   onSetDealer,
   onSetSmallBlind,
   onSetBigBlind,
-  allowPositionChange = false
+  allowPositionChange = false,
+  canShowInsight = false,
+  onShowInsight
 }: PlayerDisplayProps) {
   const stackChange = player.stack - startingBalance;
   const winRate = player.handsPlayed > 0 ? ((player.handsWon / player.handsPlayed) * 100).toFixed(1) : '0.0';
@@ -83,37 +87,44 @@ export function PlayerDisplay({
         </div>
       )}
 
-      {allowPositionChange && (
-        <div className="mt-2 flex gap-1">
-          <Button 
-            type="button"
-            size="sm" 
-            variant={player.isDealer ? "default" : "outline"} 
-            className="h-6 px-2 text-xs"
-            onClick={() => onSetDealer?.(player.id)}
-          >
-            BTN
+      <div className="mt-2 flex gap-1">
+        {allowPositionChange && (
+          <>
+            <Button 
+              type="button"
+              size="sm" 
+              variant={player.isDealer ? "default" : "outline"} 
+              className="h-6 px-2 text-xs"
+              onClick={() => onSetDealer?.(player.id)}
+            >
+              BTN
+            </Button>
+            <Button 
+              type="button"
+              size="sm" 
+              variant={player.isSmallBlind ? "default" : "outline"} 
+              className="h-6 px-2 text-xs"
+              onClick={() => onSetSmallBlind?.(player.id)}
+            >
+              SB
+            </Button>
+            <Button 
+              type="button"
+              size="sm" 
+              variant={player.isBigBlind ? "default" : "outline"} 
+              className="h-6 px-2 text-xs"
+              onClick={() => onSetBigBlind?.(player.id)}
+            >
+              BB
+            </Button>
+          </>
+        )}
+        {!isUserPlayer && canShowInsight && (
+          <Button type="button" size="sm" variant="outline" className="h-6 px-2 text-xs" onClick={() => onShowInsight?.(player)}>
+            AI Insight
           </Button>
-          <Button 
-            type="button"
-            size="sm" 
-            variant={player.isSmallBlind ? "default" : "outline"} 
-            className="h-6 px-2 text-xs"
-            onClick={() => onSetSmallBlind?.(player.id)}
-          >
-            SB
-          </Button>
-          <Button 
-            type="button"
-            size="sm" 
-            variant={player.isBigBlind ? "default" : "outline"} 
-            className="h-6 px-2 text-xs"
-            onClick={() => onSetBigBlind?.(player.id)}
-          >
-            BB
-          </Button>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

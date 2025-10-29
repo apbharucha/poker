@@ -82,4 +82,8 @@ export interface AIRecommendation {
   primaryFrequency?: number; // 0..100
   bluffSuccessOdds?: number; // 0..100 estimated fold equity
   goodForValue?: boolean; // suggests turning off bluff mode
+  smartBluff?: boolean; // AI-detected strong bluff opportunity
+  smartBluffReason?: string;
+  smartBluffAction?: ActionType;
+  smartBluffSuccessOdds?: number;
 }

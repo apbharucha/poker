@@ -48,6 +48,32 @@ create table if not exists public.player_actions (
   created_at timestamptz not null default now()
 );
 
+-- External sources and imported hands for training
+create table if not exists public.external_sources (
+  id uuid primary key default gen_random_uuid(),
+  url text not null,
+  kind text not null, -- 'csv','json','ndjson'
+  enabled boolean not null default true,
+  last_ingested_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.imported_hands (
+  id uuid primary key default gen_random_uuid(),
+  source_id uuid references public.external_sources(id) on delete set null,
+  hand jsonb not null,
+  normalized jsonb, -- mapped fields: stakes, positions, actions, board, outcome
+  created_at timestamptz not null default now()
+);
+
+-- Model parameters storage for lightweight online learning
+create table if not exists public.model_params (
+  id uuid primary key default gen_random_uuid(),
+  name text not null, -- e.g., 'bluff_regression_v1'
+  params jsonb not null, -- weight vectors, thresholds
+  created_at timestamptz not null default now()
+);
+
 -- RLS policies (adjust as needed). For simple write-only public ingestion:
 alter table public.events enable row level security;
 -- Use WITH CHECK (required for INSERT)

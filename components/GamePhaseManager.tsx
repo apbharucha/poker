@@ -13,6 +13,8 @@ interface GamePhaseManagerProps {
   onFinishHand: (outcome: string) => void;
   handOutcome?: string;
   holeCards?: Card[];
+  onAwardPot?: (winnerIds: number[], mode: 'win' | 'chop') => void;
+  onBackToActions?: () => void;
 }
 
 export function GamePhaseManager({
@@ -24,6 +26,8 @@ export function GamePhaseManager({
   onFinishHand,
   handOutcome,
   holeCards,
+  onAwardPot,
+  onBackToActions,
 }: GamePhaseManagerProps) {
   const [outcomeInput, setOutcomeInput] = useState('');
   const [showOutcomeInput, setShowOutcomeInput] = useState(false);
@@ -115,6 +119,27 @@ export function GamePhaseManager({
         <CardTitle>{getPhaseTitle()}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {onBackToActions && (
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={onBackToActions}>
+              Back to Actions
+            </Button>
+          </div>
+        )}
+        {currentRound === 'river' && (
+          <div className="border rounded-md p-3 space-y-2">
+            <div className="text-sm font-semibold">Showdown tools</div>
+            <div className="text-xs text-muted-foreground">Select winner(s) or choose chop after river.</div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => onAwardPot && onAwardPot([0], 'win')} disabled={!onAwardPot}>
+                Declare Hero Winner
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => onAwardPot && onAwardPot([0], 'chop')} disabled={!onAwardPot}>
+                Chop (Hero + 1)
+              </Button>
+            </div>
+          </div>
+        )}
         <CardSelector
           selectedCards={communityCards}
           onCardsChange={onCommunityCardsChange}

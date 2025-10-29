@@ -36,11 +36,15 @@ export interface StoredPlayerAction {
   timestamp: number;
 }
 
+export type PlayerTag = 'bluff_success' | 'bluff_fail' | 'agg_weak' | 'value_bet_good' | 'called_bluff';
+
 export class PokerDataStorage {
   private readonly HANDS_KEY = 'poker_hands';
   private readonly AI_RECOMMENDATIONS_KEY = 'poker_ai_recommendations';
   private readonly PLAYER_ACTIONS_KEY = 'poker_player_actions';
   private readonly TRAINING_DATA_KEY = 'poker_training_data';
+  private readonly PLAYER_REVEALS_KEY = 'poker_player_reveals';
+  private readonly PLAYER_NOTES_KEY = 'poker_player_notes';
   private readonly BLUFF_STATS_KEY = 'poker_bluff_stats';
 
   // Generate unique ID
@@ -196,6 +200,21 @@ export class PokerDataStorage {
     this.postEvent({ type: 'bluff_result', payload: { success } });
   }
 
+  // Player notes / reads
+  public getPlayerNotes(): Record<string, Record<PlayerTag, number>> {
+    const raw = localStorage.getItem(this.PLAYER_NOTES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  public addPlayerTag(playerId: number, tag: PlayerTag) {
+    const notes = this.getPlayerNotes();
+    const key = String(playerId);
+    if (!notes[key]) notes[key] = { bluff_success: 0, bluff_fail: 0, agg_weak: 0, value_bet_good: 0, called_bluff: 0 };
+    notes[key][tag] = (notes[key][tag] || 0) + 1;
+    localStorage.setItem(this.PLAYER_NOTES_KEY, JSON.stringify(notes));
+    this.postEvent({ type: 'player_tag', payload: { playerId, tag } });
+  }
+
   // Get statistics for AI improvement
   public getAIAccuracyStats(): any {
     const recommendations = this.getAIRecommendations();
@@ -231,6 +250,30 @@ export class PokerDataStorage {
   // Generic event logger (for backend tracking)
   public logEvent(type: string, payload?: any): void {
     this.postEvent({ type, payload });
+  }
+
+  // Revealed hands tracking
+  public getPlayerReveals(): Record<string, any[]> {
+    const raw = localStorage.getItem(this.PLAYER_REVEALS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  }
+
+  public recordRevealedHand(playerId: number, holeCards: { suit: string; rank: string }[], context?: any) {
+    const reveals = this.getPlayerReveals();
+    const key = String(playerId);
+    if (!reveals[key]) reveals[key] = [];
+    const entry = {
+      holeCards,
+      context: context || {},
+      timestamp: Date.now()
+    };
+    reveals[key].push(entry);
+    localStorage.setItem(this.PLAYER_REVEALS_KEY, JSON.stringify(reveals));
+    this.postEvent({ type: 'revealed_hand', payload: { playerId, holeCards, context } });
+  }
+
+  public recordDidNotShow(playerId: number) {
+    this.postEvent({ type: 'revealed_hand', payload: { playerId, didShow: false } });
   }
 
   // Export data for backup

@@ -33,6 +33,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(500).json({ error: error.message });
     }
 
+    // Auto-train when each batch of 10 hands is recorded
+    if (type === 'hand_stored') {
+      try {
+        const { count } = await supabase
+          .from('events')
+          .select('*', { count: 'exact', head: true })
+          .eq('type', 'hand_stored');
+        if ((count || 0) > 0 && (count as number) % 10 === 0) {
+          // fire-and-forget training job
+          fetch(`${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}/api/train`).catch(() => {});
+        }
+      } catch {}
+    }
+
     return res.status(200).json({ ok: true });
   } catch (err: any) {
     return res.status(400).json({ error: 'Invalid JSON body' });

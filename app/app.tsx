@@ -5,7 +5,9 @@ import { PlayerDisplay } from '@/components/PlayerDisplay';
 import { AIRecommendation } from '@/components/AIRecommendation';
 import { PlayerActionPanel } from '@/components/PlayerActionPanel';
 import { GamePhaseManager } from '@/components/GamePhaseManager';
+import { PlayerInsightModal } from '@/components/PlayerInsightModal';
 import { DataAnalytics } from '@/components/DataAnalytics';
+import { PlayerStats } from '@/components/PlayerStats';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -35,14 +37,18 @@ function App() {
   const [bluffIntent, setBluffIntent] = useState(false);
   const [forceBluff, setForceBluff] = useState(false);
   const [bluffAttemptActive, setBluffAttemptActive] = useState(false);
-  const [bluffAttemptRecorded, setBluffAttemptRecorded] = useState(false);
+  const [bluffEligible, setBluffEligible] = useState(false);
   
   const dataStorage = getDataStorage();
   const [bluffStats, setBluffStats] = useState<{ attempts: number; successes: number; failures: number }>(() => dataStorage.getBluffStats());
   const [newPlayerName, setNewPlayerName] = useState<string>('');
   const [newPlayerStack, setNewPlayerStack] = useState<number>(0);
   const [removePlayerId, setRemovePlayerId] = useState<number | null>(null);
-
+  const [insightOpen, setInsightOpen] = useState(false);
+  const [insightPlayer, setInsightPlayer] = useState<Player | null>(null);
+  const [setStackPlayerId, setSetStackPlayerId] = useState<number | null>(null);
+  const [setStackAmount, setSetStackAmount] = useState<number | ''>('');
+  
   const initializeGame = useCallback((setup: GameSetupType) => {
     const smallBlindPos = setup.numberOfPlayers === 2 ? 0 : 1;
     const bigBlindPos = setup.numberOfPlayers === 2 ? 1 : 2;
@@ -95,10 +101,12 @@ function App() {
     
     setGameState(newGameState);
     
-    // Start storing this hand
-    const handId = dataStorage.storeHand(newGameState, 'Hand started');
-    setCurrentHandId(handId);
+    // Create a temporary hand id (only persist on completion)
+    const tempId = Date.now().toString() + Math.random().toString(36).slice(2);
+    setCurrentHandId(tempId);
   }, []);
+
+  const [activeTab, setActiveTab] = useState<'your-cards'|'community'|'analytics'>('your-cards');
 
   const requestAIRecommendation = useCallback(() => {
     if (!gameState || gameState.userHoleCards.length !== 2) return;
@@ -147,6 +155,15 @@ function App() {
       const player = updatedPlayers[playerId];
       
       if (!player.isActive || player.stack === 0) return;
+
+      // If hero folds while bluff eligible, record a failed bluff attempt
+      if (playerId === 0 && action === 'fold' && bluffAttemptActive && bluffEligible) {
+        dataStorage.recordBluffAttempt();
+        dataStorage.recordBluffResult(false);
+        setBluffStats(dataStorage.getBluffStats());
+        setBluffAttemptActive(false);
+        setBluffEligible(false);
+      }
 
       let actionAmount = 0;
       let newCurrentBet = player.currentBet;
@@ -212,15 +229,19 @@ function App() {
         winner.handsWon += 1;
         const outcome = `All opponents folded. ${winner.name} wins $${newPot} uncontested.`;
 
-        // Record bluff result if applicable
-        if (bluffAttemptActive) {
+        // Record bluff result if applicable and eligible (bluff stayed on)
+        if (bluffAttemptActive && bluffEligible) {
+          dataStorage.recordBluffAttempt();
           dataStorage.recordBluffResult(winner.id === 0);
           setBluffStats(dataStorage.getBluffStats());
           setBluffAttemptActive(false);
-          setBluffAttemptRecorded(false);
+          setBluffEligible(false);
+        } else {
+          setBluffAttemptActive(false);
+          setBluffEligible(false);
         }
 
-        // Store completed hand
+        // Store completed hand (only now)
         dataStorage.storeHand({ ...gameState, players: updatedPlayers, pot: 0 }, outcome);
 
         setGameState({
@@ -251,13 +272,17 @@ function App() {
     const currentIndex = roundOrder.indexOf(gameState.currentRound);
 
     if (currentIndex < roundOrder.length - 1) {
+      const nextRound = roundOrder[currentIndex + 1];
       setGameState({
         ...gameState,
-        currentRound: roundOrder[currentIndex + 1],
+        currentRound: nextRound,
         players: gameState.players.map((p) => ({ ...p, currentBet: 0 })),
         bettingComplete: false,
         currentPlayerTurn: (gameState.dealerPosition + 1) % gameState.players.length,
       });
+      if (nextRound === 'flop' || nextRound === 'turn' || nextRound === 'river') {
+        setActiveTab('community');
+      }
       setAiRecommendation(null);
     }
   }, [gameState]);
@@ -294,7 +319,7 @@ function App() {
   const finishHand = useCallback((outcome: string) => {
     if (!gameState) return;
     
-    // Store the completed hand in database
+    // Store the completed hand in database (only completed hands are persisted)
     dataStorage.storeHand(gameState, outcome);
     
     // Update AI recommendation with actual outcome if we have one
@@ -311,14 +336,18 @@ function App() {
       );
     }
     
-    // Heuristic: detect hero win from outcome string if bluff attempt was active
-    if (bluffAttemptActive) {
+    // Heuristic: finalize bluff attempt only if eligible
+    if (bluffAttemptActive && bluffEligible) {
       const lower = (outcome || '').toLowerCase();
-      const heroWon = lower.includes('you') && (lower.includes('win') || lower.includes('wins'));
+      const heroWon = lower.includes('you') && (lower.includes(' win') || lower.includes(' wins'));
+      dataStorage.recordBluffAttempt();
       dataStorage.recordBluffResult(!!heroWon);
       setBluffStats(dataStorage.getBluffStats());
       setBluffAttemptActive(false);
-      setBluffAttemptRecorded(false);
+      setBluffEligible(false);
+    } else {
+      setBluffAttemptActive(false);
+      setBluffEligible(false);
     }
 
     setGameState({
@@ -381,50 +410,11 @@ function App() {
     setBluffIntent(false);
     setForceBluff(false);
     setBluffAttemptActive(false);
-    setBluffAttemptRecorded(false);
+    setBluffEligible(false);
     
-    // Create new hand ID for the new hand
-    const newHandState = {
-      ...gameState,
-      currentRound: 'preflop' as const,
-      pot: gameState.setup.smallBlind + gameState.setup.bigBlind,
-      communityCards: [],
-      userHoleCards: [],
-      currentHandNumber: gameState.currentHandNumber + 1,
-      bettingComplete: false,
-      handOutcome: undefined,
-      dealerPosition: newDealerPosition,
-      smallBlindPosition: newSmallBlindPosition,
-      bigBlindPosition: newBigBlindPosition,
-      players: gameState.players.map((p, idx) => {
-        let playerStack = p.stack;
-        let currentBet = 0;
-        
-        // Deduct blinds for new hand
-        if (idx === newSmallBlindPosition) {
-          playerStack -= gameState.setup.smallBlind;
-          currentBet = gameState.setup.smallBlind;
-        } else if (idx === newBigBlindPosition) {
-          playerStack -= gameState.setup.bigBlind;
-          currentBet = gameState.setup.bigBlind;
-        }
-        
-        return {
-          ...p,
-          isDealer: idx === newDealerPosition,
-          isSmallBlind: idx === newSmallBlindPosition,
-          isBigBlind: idx === newBigBlindPosition,
-          isActive: playerStack > 0,
-          currentBet: currentBet,
-          stack: playerStack,
-          actions: [],
-          handsPlayed: p.handsPlayed + 1,
-        };
-      }),
-    };
-    
-    const handId = dataStorage.storeHand(newHandState, 'New hand started');
-    setCurrentHandId(handId);
+    // Create new temp hand id for the new hand (persist on completion only)
+    const tempId = Date.now().toString() + Math.random().toString(36).slice(2);
+    setCurrentHandId(tempId);
   }, [gameState, dataStorage]);
 
   const handleSetDealer = useCallback((playerId: number) => {
@@ -560,6 +550,26 @@ function App() {
                         onSetDealer={handleSetDealer}
                         onSetSmallBlind={handleSetSmallBlind}
                         onSetBigBlind={handleSetBigBlind}
+                        canShowInsight={(() => {
+                          if (player.id === 0) return false;
+                          if (!player.isActive) return false;
+                          if (gameState.currentRound === 'preflop') {
+                            const acted = player.actions && player.actions.length > 0;
+                            if (player.isBigBlind) {
+                              // BB: require an action beyond checking
+                              const nonCheck = player.actions?.some(a => a.action !== 'check');
+                              return !!nonCheck;
+                            }
+                            if (player.isSmallBlind) {
+                              // SB: require any action (post-blind is not an action in our model)
+                              return acted;
+                            }
+                            // Other positions: require they have acted preflop
+                            return acted;
+                          }
+                          return true;
+                        })()}
+                        onShowInsight={(p) => { setInsightPlayer(p); setInsightOpen(true); }}
                       />
                     ))}
                   </div>
@@ -568,7 +578,7 @@ function App() {
                 <Separator className="my-4" />
 
                 {/* In-game player management */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="space-y-2">
                     <div className="text-sm font-semibold">Add Player</div>
                     <div className="flex flex-col sm:flex-row gap-2">
@@ -671,6 +681,56 @@ function App() {
                       Removed players are hidden once their stack is $0.
                     </div>
                   </div>
+
+                  <div className="space-y-2">
+                    <div className="text-sm font-semibold">Set Player Stack</div>
+                    <div className="flex flex-col sm:flex-row gap-2 items-center">
+                      <Select value={setStackPlayerId !== null ? String(setStackPlayerId) : ''} onValueChange={(v) => setSetStackPlayerId(parseInt(v, 10))}>
+                        <SelectTrigger className="sm:w-64">
+                          <SelectValue placeholder="Select player" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {gameState.players.map((p) => (
+                            <SelectItem key={p.id} value={String(p.id)}>
+                              {p.name} (${p.stack})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number"
+                        min={0}
+                        placeholder="New stack ($)"
+                        value={setStackAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setSetStackAmount(val === '' ? '' : Math.max(0, parseInt(val || '0', 10)));
+                        }}
+                        className="sm:w-40"
+                      />
+                      <Button
+                        variant="outline"
+                        disabled={setStackPlayerId === null || setStackAmount === ''}
+                        onClick={() => {
+                          if (!gameState || setStackPlayerId === null || setStackAmount === '') return;
+                          const amount = Number(setStackAmount);
+                          const updated = gameState.players.map((p) =>
+                            p.id === setStackPlayerId ? { ...p, stack: amount, isActive: amount > 0 ? p.isActive : false } : p
+                          );
+                          const prev = gameState.players.find(p => p.id === setStackPlayerId)?.stack ?? null;
+                          setGameState({ ...gameState, players: updated });
+                          dataStorage.logEvent('set_stack', { playerId: setStackPlayerId, prevStack: prev, newStack: amount });
+                          setSetStackPlayerId(null);
+                          setSetStackAmount('');
+                        }}
+                      >
+                        Set Stack
+                      </Button>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Useful for custom scenarios; does not alter pot or bets.
+                    </div>
+                  </div>
                 </div>
 
                 <Separator className="my-4" />
@@ -715,11 +775,12 @@ function App() {
               </CardContent>
             </Card>
 
-            <Tabs defaultValue="your-cards">
-              <TabsList className="grid w-full grid-cols-3">
+            <Tabs value={activeTab} onValueChange={(v: any) => setActiveTab(v)}>
+              <TabsList className="grid w-full grid-cols-4">
                 <TabsTrigger value="your-cards">Your Cards</TabsTrigger>
                 <TabsTrigger value="community">Community Cards</TabsTrigger>
                 <TabsTrigger value="analytics">Analytics</TabsTrigger>
+                <TabsTrigger value="players">Players</TabsTrigger>
               </TabsList>
               <TabsContent value="your-cards">
                 <CardSelector
@@ -745,13 +806,16 @@ function App() {
                   excludeCards={gameState.userHoleCards}
                 />
               </TabsContent>
+              <TabsContent value="players">
+                <PlayerStats players={gameState.players} />
+              </TabsContent>
               <TabsContent value="analytics">
                 <DataAnalytics />
               </TabsContent>
             </Tabs>
           </div>
 
-          {bluffIntent && aiRecommendation?.goodForValue && (
+          {bluffIntent && !forceBluff && aiRecommendation?.goodForValue && (
             <Card className="border-yellow-300 bg-yellow-50">
               <CardHeader>
                 <CardTitle className="text-sm">Strong hand detected</CardTitle>
@@ -762,7 +826,7 @@ function App() {
                 </div>
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => setBluffIntent(false)}>Turn Off Bluff</Button>
-                  <Button size="sm" variant="outline" onClick={requestAIRecommendation}>Keep Bluffing</Button>
+                  <Button size="sm" variant="outline" onClick={() => { setForceBluff(true); requestAIRecommendation(); }}>Keep Bluffing</Button>
                 </div>
               </CardContent>
             </Card>
@@ -797,11 +861,10 @@ function App() {
                       setForceBluff(false);
                       if (next) {
                         setBluffAttemptActive(true);
-                        if (!bluffAttemptRecorded) {
-                          dataStorage.recordBluffAttempt();
-                          setBluffAttemptRecorded(true);
-                          setBluffStats(dataStorage.getBluffStats());
-                        }
+                        setBluffEligible(true);
+                      } else {
+                        // Turning off bluff mid-hand invalidates eligibility
+                        setBluffEligible(false);
                       }
                     }}
                   >
@@ -823,6 +886,27 @@ function App() {
               </CardContent>
             </Card>
 
+            {/* Smart Bluff Opportunity prompt */}
+            {aiRecommendation && aiRecommendation.smartBluff && !bluffIntent && (
+              <Card className="border-purple-300 bg-purple-50">
+                <CardHeader>
+                  <CardTitle className="text-sm">Strong Bluff Opportunity Detected</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="text-sm text-muted-foreground mb-2">{aiRecommendation.smartBluffReason}</div>
+                  {typeof aiRecommendation.smartBluffSuccessOdds === 'number' && (
+                    <div className="text-xs mb-2">Estimated success: {aiRecommendation.smartBluffSuccessOdds}%</div>
+                  )}
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => { setBluffIntent(true); setForceBluff(true); setBluffAttemptActive(true); setBluffEligible(true); requestAIRecommendation(); }}>
+                      Take Bluff Line
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={requestAIRecommendation}>Recompute</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <AIRecommendation recommendation={aiRecommendation} loading={isAnalyzing} />
 
             {gameState.bettingComplete ? (
@@ -835,6 +919,24 @@ function App() {
                 onFinishHand={finishHand}
                 handOutcome={gameState.handOutcome}
                 holeCards={gameState.userHoleCards}
+                onAwardPot={(winnerIds) => {
+                  if (!gameState) return;
+                  let pot = gameState.pot;
+                  const winners = gameState.players.filter(p => winnerIds.includes(p.id));
+                  if (winners.length === 0) return;
+                  const share = Math.floor(pot / winners.length);
+                  const updatedPlayers = gameState.players.map(p => ({ ...p }));
+                  winners.forEach(w => { updatedPlayers[w.id].stack += share; });
+                  pot = 0;
+                  setGameState({
+                    ...gameState,
+                    players: updatedPlayers.map(p => ({ ...p, currentBet: 0 })),
+                    pot,
+                    currentRound: 'showdown',
+                    bettingComplete: true,
+                  });
+                }}
+                onBackToActions={() => setGameState({ ...gameState, bettingComplete: false })}
               />
             ) : (
               <PlayerActionPanel
@@ -855,6 +957,13 @@ function App() {
           </div>
         </div>
       </div>
+
+      <PlayerInsightModal
+        open={insightOpen}
+        onOpenChange={setInsightOpen}
+        player={insightPlayer}
+        context={{ currentRound: gameState.currentRound, communityCards: gameState.communityCards }}
+      />
     </div>
   );
 }

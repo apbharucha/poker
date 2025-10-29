@@ -54,6 +54,22 @@ app.post('/events', async (req, res) => {
 
   const { error } = await supabase.from('events').insert({ type, payload });
   if (error) return res.status(200).json({ ok: true, stored: false, buffered: true, note: "Supabase insert failed; using buffer", error: error.message });
+
+  // Auto-train on every 10th hand stored
+  if (type === 'hand_stored') {
+    try {
+      const { count } = await supabase
+        .from('events')
+        .select('*', { count: 'exact', head: true })
+        .eq('type', 'hand_stored');
+      if ((count || 0) > 0 && (count as number) % 10 === 0) {
+        fetch('http://localhost:4000/health') // ensure server reachable
+          .then(() => fetch(`${process.env.VERCEL_URL ? 'https://' + process.env.VERCEL_URL : ''}/api/train`).catch(() => {}))
+          .catch(() => {});
+      }
+    } catch {}
+  }
+
   res.json({ ok: true, stored: true });
 });
 

@@ -1,0 +1,37 @@
+Poker AI Assistant — Frontend Summary
+
+Overview
+A React + Vite + Tailwind frontend for simulating live poker rounds with AI recommendations, player management, analytics, and per‑player insights.
+
+Key Features
+- Game setup
+  - Configure players, starting stacks, small/big blinds, variant
+  - Blind inputs support clean numeric typing
+- Table UI
+  - Player cards with BTN/SB/BB toggles
+  - Set Player Stack control (in‑game), remove player, add player
+  - Auto award entire pot when only one active player remains (fold‑out)
+  - Round locking with Confirm Round and Back to Actions to edit
+- Rounds and cards
+  - Controlled tabs; jump to Community on flop/turn/river
+  - Hole card selector disabled after flop
+  - Showdown tools (river): declare winner or chop and distribute pot
+- AI Recommendation
+  - Primary + secondary actions with frequencies
+  - Bluff-aware mode + Continue Bluff enforcing aggressive line
+  - Smart Bluff Opportunity prompts across preflop/flop/turn/river with success odds
+  - Loads learned model params to modulate bluff success estimates
+- Per‑player insights
+  - AI Insight button per opponent (preflop hidden for blinds until they act)
+  - Action‑based range/summary; confidence score
+  - Record revealed hands or mark “did not show”
+- Analytics
+  - DataAnalytics with AI accuracy stats and data export/import
+  - Players tab with tagging (bluff success/fail, aggression, value betting, called bluff)
+- Telemetry & events
+  - Fire‑and‑forget events for hands, actions, AI recs, tags, bluffs, revealed hands, set_stack
+
+Notable Behaviors
+- Immediate hand end and pot award on last fold
+- Inputs sanitize numeric values; big blind enforced ≥ small blind on start
+- Insight visibility rules for blinds preflop

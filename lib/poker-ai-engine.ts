@@ -59,7 +59,11 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
   });
 
   // Heuristic to flag when hand is likely strong enough to pivot from bluffing to value
-  const goodForValue = handStrength >= 0.65 || (expectedValue !== undefined && expectedValue > 0 && context.currentRound !== 'preflop');
+  // Be conservative to avoid false positives during bluffs
+  const strongByStrength = handStrength >= 0.75; // strong made hand threshold
+  const strongByWinProb = winProbability >= 60;  // confidence threshold
+  const notWeakBluff = !(context.bluffIntent && handStrength < 0.5 && winProbability < 55);
+  const goodForValue = !context.forceBluff && (strongByStrength || strongByWinProb) && context.currentRound !== 'preflop' && notWeakBluff;
 
   // Allocate mixed strategy frequencies between primary and secondary
   const { primaryFreq, secondaryFreq } = allocateFrequencies({
@@ -68,6 +72,16 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
     winProbability,
     potOdds,
     bluffIntent: !!context.bluffIntent,
+  });
+
+  // Detect strong bluff opportunity (especially on river with missed draws)
+  const smart = detectStrongBluffOpportunity({
+    context,
+    handStrength,
+    winProbability,
+    boardThreat,
+    aggression: analyzeAggression(context.playerActions),
+    bluffSuccessOdds,
   });
 
   return {
@@ -82,6 +96,10 @@ export function generateAIRecommendation(context: GameContext): AIRecommendation
     primaryFrequency: primaryFreq,
     bluffSuccessOdds,
     goodForValue,
+    smartBluff: smart?.flag || false,
+    smartBluffReason: smart?.reason,
+    smartBluffAction: smart?.suggestedAction,
+    smartBluffSuccessOdds: smart?.successOdds,
   };
 }
 
@@ -443,8 +461,8 @@ function evaluateBoardThreat(community: Card[]): number {
   // Simple threat metric: high cards, suitedness, connectivity
   if (community.length === 0) return 0.3;
   let highCards = 0;
-  let suitCounts: Record<string, number> = {} as any;
-  let ranksIdx: number[] = [];
+  const suitCounts: Record<string, number> = {} as any;
+  const ranksIdx: number[] = [];
   for (const c of community) {
     if (['A','K','Q','J','10'].includes(c.rank)) highCards++;
     suitCounts[c.suit] = (suitCounts[c.suit] || 0) + 1;
@@ -460,6 +478,18 @@ function evaluateBoardThreat(community: Card[]): number {
   return Math.max(0.1, Math.min(0.8, 0.2 + flushThreat + straightThreat + highCardThreat));
 }
 
+// Lazy-loaded model params (optional)
+let __modelParams: any | null = null;
+let __modelParamsLoaded = false;
+function loadModelParamsOnce() {
+  if (typeof window === 'undefined' || __modelParamsLoaded) return;
+  __modelParamsLoaded = true;
+  fetch('/api/model-params')
+    .then(r => r.ok ? r.json() : null)
+    .then(j => { __modelParams = j?.params || null; })
+    .catch(() => {});
+}
+
 function estimateBluffSuccess({
   round,
   activePlayers,
@@ -473,10 +503,26 @@ function estimateBluffSuccess({
   boardThreat: number; // 0..1
   sizingAggression: number; // 0..1
 }): number {
+  loadModelParamsOnce();
+
   let base = 0.35; // preflop baseline
   if (round === 'flop') base = 0.45;
   else if (round === 'turn') base = 0.5;
   else if (round === 'river') base = 0.55;
+
+  // Adjust base by learned rates if available
+  try {
+    const rates = __modelParams?.bluff_success_rates;
+    if (rates && typeof rates === 'object') {
+      const key = round as any;
+      const r = rates[key];
+      if (r && r.total > 20) {
+        const rate = r.succ / r.total; // 0..1
+        base = Math.max(0.2, Math.min(0.8, rate));
+      }
+    }
+  } catch {}
+
   // Multiway penalty
   const opp = Math.max(1, activePlayers - 1);
   let fe = base - (opp - 1) * 0.08;
@@ -485,6 +531,86 @@ function estimateBluffSuccess({
   // Opponent aggression reduces FE
   fe -= Math.min(0.2, aggression * 0.2);
   return Math.round(Math.max(0.05, Math.min(0.9, fe)) * 100);
+}
+
+function detectStrongBluffOpportunity({
+  context,
+  handStrength,
+  winProbability,
+  boardThreat,
+  aggression,
+  bluffSuccessOdds,
+}: {
+  context: any;
+  handStrength: number;
+  winProbability: number;
+  boardThreat: number;
+  aggression: number;
+  bluffSuccessOdds: number;
+}): { flag: boolean; reason: string; suggestedAction: ActionType; successOdds: number } | null {
+  // Only consider when not already forcing bluff
+  if (context.forceBluff) return null;
+
+  const isRiver = context.currentRound === 'river';
+  const isFlopOrTurn = context.currentRound === 'flop' || context.currentRound === 'turn';
+  const isPreflop = context.currentRound === 'preflop';
+  const noShowdownValue = handStrength < 0.30 && winProbability < 45;
+  const scaryBoard = boardThreat >= 0.5;
+  const lowAggression = aggression <= 0.35; // opponents not very aggressive overall
+  const noBetToCall = context.currentBet === 0;
+
+  // River: busted draws / weak showdown value on scary boards
+  if (isRiver && noShowdownValue && scaryBoard && lowAggression) {
+    const reason = 'Busted draw/weak showdown value on a threatening board; opponents have shown limited aggression. A well-sized bluff can maximize fold equity.';
+    const suggestedAction: ActionType = 'raise';
+    const successOdds = bluffSuccessOdds;
+    return { flag: true, reason, suggestedAction, successOdds };
+  }
+
+  // Flop/Turn: semi-bluff when you have equity and board pressure
+  if (isFlopOrTurn && handStrength >= 0.30 && handStrength <= 0.55 && scaryBoard) {
+    const reason = 'Semi-bluff: you have equity with potential to improve and the board applies pressure; an aggressive line can win now or later.';
+    const suggestedAction: ActionType = 'raise';
+    const successOdds = Math.max(bluffSuccessOdds, 40);
+    return { flag: true, reason, suggestedAction, successOdds };
+  }
+
+  // Preflop: opportunistic open/3-bet bluff in low aggression environments
+  if (isPreflop && handStrength < 0.25 && lowAggression && context.activePlayers <= 3) {
+    if (noBetToCall) {
+      const reason = 'Preflop steal: unopened pot, low table aggression, and many folds expected. Opening raise pressures blinds.';
+      const suggestedAction: ActionType = 'raise';
+      const successOdds = Math.max(35, Math.min(65, Math.round((1 - (context.activePlayers - 1) * 0.15) * 100)));
+      return { flag: true, reason, suggestedAction, successOdds };
+    } else if (context.activePlayers <= 2 && context.currentBet <= context.bigBlind * 3) {
+      const reason = 'Light 3-bet spot: heads-up and low aggression indicate a profitable bluff 3-bet frequency.';
+      const suggestedAction: ActionType = 'raise';
+      const successOdds = Math.max(30, Math.min(55, Math.round(bluffSuccessOdds * 0.8)));
+      return { flag: true, reason, suggestedAction, successOdds };
+    }
+  }
+
+  return null;
+}
+
+export function generatePlayerInsight(playerActions: Array<{ action: ActionType; amount?: number }>, context: any): { summary: string; likelyRange: string; confidence: number } {
+  // Very coarse heuristic
+  const raises = playerActions.filter(a => a.action === 'raise' || a.action === 'all-in').length;
+  const calls = playerActions.filter(a => a.action === 'call').length;
+  const checks = playerActions.filter(a => a.action === 'check').length;
+  const folds = playerActions.filter(a => a.action === 'fold').length;
+
+  let likelyRange = 'Wide, mixed strength';
+  let confidence = 40;
+  if (raises >= 2) { likelyRange = 'Strong made hands (TT+, AQ+) or strong draws'; confidence = 65; }
+  else if (raises === 1 && calls >= 1) { likelyRange = 'Top pairs, draws, mid pairs'; confidence = 55; }
+  else if (calls >= 2) { likelyRange = 'Draws, mid/low pairs, suited connectors'; confidence = 50; }
+  else if (checks > 1) { likelyRange = 'Marginal/weak showdown hands, backdoor draws'; confidence = 45; }
+  if (folds > 0) confidence = Math.max(30, confidence - 10);
+
+  const street = context?.currentRound || 'unknown';
+  const summary = `Based on ${street} actions: raises=${raises}, calls=${calls}. Likely range: ${likelyRange}.`;
+  return { summary, likelyRange, confidence };
 }
 
 function summarizeActions(actions: Array<{ action: ActionType; amount?: number }>) {

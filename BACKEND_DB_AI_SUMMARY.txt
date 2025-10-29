@@ -1,0 +1,48 @@
+Poker AI Assistant — Backend/Database/AI Summary
+
+Overview
+A dual backend setup: local Express server (dev) and Vercel serverless APIs (prod). Supabase stores events, structured hands/actions, imported datasets, and learned model params. A scheduled/triggered trainer updates parameters used by the frontend AI.
+
+Backend APIs
+- Local Express (http://localhost:4000)
+  - GET /health: { ok, supabase, eventsTable }
+  - POST /events: ingest client events; buffers if Supabase table missing
+  - GET /events: recent events (Supabase or in‑memory fallback)
+  - GET /bluff-stats: summarize bluff attempts/results
+- Vercel serverless
+  - POST /api/track: ingest events into Supabase
+  - GET /api/health: supabase + eventsTable check
+  - GET /api/events: recent events from Supabase
+  - GET /api/bluff-stats: bluff stats from Supabase
+  - POST /api/ingest: import external datasets (CSV/JSON) into imported_hands
+  - GET /api/train: training job to compute/update model_params
+  - GET /api/model-params: fetch latest learned parameters
+
+Database (Supabase)
+- events (id, type, payload, created_at) with RLS (insert/select)
+- hands, ai_recommendations, player_actions (structured storage)
+- external_sources (url, kind, last_ingested_at)
+- imported_hands (raw/normalized imported data)
+- model_params (name, params)
+- Extensions/policies: pgcrypto, WITH CHECK insert policy
+
+Telemetry Events Captured
+- hand_stored, player_action, ai_recommendation
+- bluff_attempt, bluff_result, player_tag
+- revealed_hand (or didShow:false), set_stack
+
+AI/Training
+- Frontend AI estimates hand strength, win prob, EV; suggests primary/secondary with frequencies
+- Bluff-aware and force‑bluff logic; Smart Bluff Opportunity detector across all streets
+- Trainer aggregates bluff success rates and stores in model_params
+- Frontend lazily loads model_params and adjusts bluff success odds at runtime
+- Auto-train triggers: every 10th hand stored (api/track and local /events) and daily cron
+
+Ingestion
+- /api/ingest supports UCI poker CSV; stores in imported_hands with normalized kind
+- Extendable parsers for additional structured sources (CSV/JSON/NDJSON)
+
+Dev/Deploy Notes
+- Env vars: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (server only)
+- vercel.json rewrites SPA and defines cron for /api/train
+- Local dev: run frontend (vite) and backend (tsx server/index.ts)

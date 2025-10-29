@@ -18,7 +18,8 @@ export function DataAnalytics() {
     try {
       const aiStats = dataStorage.getAIAccuracyStats();
       const hands = dataStorage.getHands();
-      const actions = dataStorage.getPlayerActions();
+      const completedHandIds = new Set(hands.map((h: any) => h.id));
+      const actions = dataStorage.getPlayerActions().filter((a: any) => completedHandIds.has(a.handId));
       
       setStats(aiStats);
       setHandsCount(hands.length);

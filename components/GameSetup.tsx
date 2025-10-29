@@ -12,12 +12,17 @@ interface GameSetupProps {
 
 export function GameSetup({ onStartGame }: GameSetupProps) {
   const [numberOfPlayers, setNumberOfPlayers] = useState(6);
-  const [startingBalance, setStartingBalance] = useState(1000);
-  const [smallBlind, setSmallBlind] = useState(5);
-  const [bigBlind, setBigBlind] = useState(10);
+  const [startingBalanceInput, setStartingBalanceInput] = useState('1000');
+  const [smallBlindInput, setSmallBlindInput] = useState('5');
+  const [bigBlindInput, setBigBlindInput] = useState('10');
   const [gameVariant, setGameVariant] = useState<'no-limit-holdem' | 'pot-limit-omaha'>('no-limit-holdem');
 
   const handleStartGame = () => {
+    const startingBalance = Math.max(0, parseInt(startingBalanceInput || '0', 10));
+    const smallBlind = Math.max(1, parseInt(smallBlindInput || '0', 10));
+    const bigBlindRaw = Math.max(1, parseInt(bigBlindInput || '0', 10));
+    const bigBlind = Math.max(smallBlind, bigBlindRaw);
+
     onStartGame({
       numberOfPlayers,
       startingBalance,
@@ -55,11 +60,30 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
               <Label htmlFor="starting-balance">Starting Balance ($)</Label>
               <Input
                 id="starting-balance"
-                type="number"
-                value={startingBalance}
-                onChange={(e) => setStartingBalance(Number(e.target.value))}
-                min={100}
-                step={100}
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={startingBalanceInput}
+                onFocus={() => { if (startingBalanceInput === '0') setStartingBalanceInput(''); }}
+                onKeyDown={(e) => {
+                  const k = e.key;
+                  if (/^[0-9]$/.test(k) && (startingBalanceInput === '0')) {
+                    e.preventDefault();
+                    setStartingBalanceInput(k);
+                  }
+                }}
+                onPaste={(e) => {
+                  const text = (e.clipboardData || (window as any).clipboardData).getData('text');
+                  const v = text.replace(/[^0-9]/g, '');
+                  if (!v) { e.preventDefault(); return; }
+                  e.preventDefault();
+                  setStartingBalanceInput(v.replace(/^0+(?=\d)/, ''));
+                }}
+                onChange={(e) => {
+                  const v = e.target.value.replace(/[^0-9]/g, '');
+                  if (v === '') { setStartingBalanceInput(''); return; }
+                  setStartingBalanceInput(v.replace(/^0+(?=\d)/, ''));
+                }}
               />
             </div>
 
@@ -68,10 +92,30 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
                 <Label htmlFor="small-blind">Small Blind ($)</Label>
                 <Input
                   id="small-blind"
-                  type="number"
-                  value={smallBlind}
-                  onChange={(e) => setSmallBlind(Number(e.target.value))}
-                  min={1}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={smallBlindInput}
+                  onFocus={() => { if (smallBlindInput === '0') setSmallBlindInput(''); }}
+                  onKeyDown={(e) => {
+                    const k = e.key;
+                    if (/^[0-9]$/.test(k) && (smallBlindInput === '0')) {
+                      e.preventDefault();
+                      setSmallBlindInput(k);
+                    }
+                  }}
+                  onPaste={(e) => {
+                    const text = (e.clipboardData || (window as any).clipboardData).getData('text');
+                    const v = text.replace(/[^0-9]/g, '');
+                    if (!v) { e.preventDefault(); return; }
+                    e.preventDefault();
+                    setSmallBlindInput(v.replace(/^0+(?=\d)/, ''));
+                  }}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/[^0-9]/g, '');
+                    if (v === '') { setSmallBlindInput(''); return; }
+                    setSmallBlindInput(v.replace(/^0+(?=\d)/, ''));
+                  }}
                 />
               </div>
 
@@ -79,10 +123,30 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
                 <Label htmlFor="big-blind">Big Blind ($)</Label>
                 <Input
                   id="big-blind"
-                  type="number"
-                  value={bigBlind}
-                  onChange={(e) => setBigBlind(Number(e.target.value))}
-                  min={smallBlind}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={bigBlindInput}
+                  onFocus={() => { if (bigBlindInput === '0') setBigBlindInput(''); }}
+                  onKeyDown={(e) => {
+                    const k = e.key;
+                    if (/^[0-9]$/.test(k) && (bigBlindInput === '0')) {
+                      e.preventDefault();
+                      setBigBlindInput(k);
+                    }
+                  }}
+                  onPaste={(e) => {
+                    const text = (e.clipboardData || (window as any).clipboardData).getData('text');
+                    const v = text.replace(/[^0-9]/g, '');
+                    if (!v) { e.preventDefault(); return; }
+                    e.preventDefault();
+                    setBigBlindInput(v.replace(/^0+(?=\d)/, ''));
+                  }}
+                  onChange={(e) => {
+                    const v = e.target.value.replace(/[^0-9]/g, '');
+                    if (v === '') { setBigBlindInput(''); return; }
+                    setBigBlindInput(v.replace(/^0+(?=\d)/, ''));
+                  }}
                 />
               </div>
             </div>
