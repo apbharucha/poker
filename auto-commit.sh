@@ -8,6 +8,12 @@ set -e
 # Change to project directory
 cd /Users/aavibharucha/Documents/Projects/poker
 
+# Ensure git config is set correctly
+export GIT_AUTHOR_NAME="apbharucha"
+export GIT_AUTHOR_EMAIL="apbharucha07@gmail.com"
+export GIT_COMMITTER_NAME="apbharucha"
+export GIT_COMMITTER_EMAIL="apbharucha07@gmail.com"
+
 # Log files
 LOG_FILE="/Users/aavibharucha/Documents/Projects/poker/auto-commit.log"
 ERROR_LOG="/Users/aavibharucha/Documents/Projects/poker/auto-commit-error.log"
