@@ -73,13 +73,13 @@ export function PlayerActionPanel({
   // Handle dollar amount change (update BBs)
   const handleDollarChange = (value: number) => {
     setBetAmount(value);
-    setBetInBBs(parseFloat((value / bigBlind).toFixed(2)));
+    setBetInBBs(value / bigBlind);
   };
 
   // Handle BB change (update dollars)
   const handleBBChange = (value: number) => {
     setBetInBBs(value);
-    setBetAmount(Math.round(value * bigBlind));
+    setBetAmount(value * bigBlind);
   };
 
   const handleAction = () => {
@@ -146,7 +146,7 @@ export function PlayerActionPanel({
     <Card>
       <CardHeader>
         <CardTitle>
-          {player.name}'s Action ({currentRound.toUpperCase()})
+          {player.customName || player.name}'s Action ({currentRound.toUpperCase()})
         </CardTitle>
         <div className="text-sm text-muted-foreground">
           Stack: ${player.stack} ({(player.stack / bigBlind).toFixed(1)} BB) | 
@@ -181,8 +181,9 @@ export function PlayerActionPanel({
                 type="number"
                 min={minBet}
                 max={player.stack}
+                step="1"
                 value={betAmount || ''}
-                onChange={(e) => handleDollarChange(parseInt(e.target.value) || 0)}
+                onChange={(e) => handleDollarChange(parseFloat(e.target.value) || 0)}
                 placeholder={`Min: $${minBet}`}
               />
             </div>
@@ -198,7 +199,7 @@ export function PlayerActionPanel({
                 placeholder={`Min: ${(minBet / bigBlind).toFixed(1)} BB`}
               />
               <div className="text-xs text-muted-foreground mt-1">
-                {betAmount > 0 && `= $${betAmount}`}
+                {betAmount > 0 && `= $${betAmount.toFixed(0)}`}
               </div>
             </div>
           </div>
@@ -212,8 +213,9 @@ export function PlayerActionPanel({
                 type="number"
                 min={minRaise}
                 max={player.stack + player.currentBet}
+                step="1"
                 value={betAmount || ''}
-                onChange={(e) => handleDollarChange(parseInt(e.target.value) || 0)}
+                onChange={(e) => handleDollarChange(parseFloat(e.target.value) || 0)}
                 placeholder={`Min: $${minRaise}`}
               />
             </div>
@@ -229,7 +231,7 @@ export function PlayerActionPanel({
                 placeholder={`Min: ${(minRaise / bigBlind).toFixed(1)} BB`}
               />
               <div className="text-xs text-muted-foreground mt-1">
-                {betAmount > 0 && `= $${betAmount}`}
+                {betAmount > 0 && `= $${betAmount.toFixed(0)}`}
               </div>
             </div>
           </div>

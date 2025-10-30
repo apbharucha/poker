@@ -272,7 +272,7 @@ export function HandHistoryLogs({ sessionStartTime }: HandHistoryLogsProps) {
                 <div className="grid grid-cols-2 gap-2">
                   {selectedLog.hand.players.map((p: any) => (
                     <div key={p.id} className="text-sm">
-                      <span className="font-medium">{p.name}</span>
+                      <span className="font-medium">{p.customName || p.name}</span>
                       {p.isDealer && <Badge variant="outline" className="ml-1 text-xs">BTN</Badge>}
                       {p.isSmallBlind && <Badge variant="outline" className="ml-1 text-xs">SB</Badge>}
                       {p.isBigBlind && <Badge variant="outline" className="ml-1 text-xs">BB</Badge>}

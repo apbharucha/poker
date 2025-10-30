@@ -28,7 +28,7 @@ export function PlayerInsightModal({ open, onOpenChange, player, context, allowR
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>AI Insight {player ? `— ${player.name}` : ''}</DialogTitle>
+          <DialogTitle>AI Insight {player ? `— ${player.customName || player.name}` : ''}</DialogTitle>
         </DialogHeader>
         {player && insight && (
           <div className="space-y-4">

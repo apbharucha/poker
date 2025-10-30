@@ -15,7 +15,7 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
   const [startingBalanceInput, setStartingBalanceInput] = useState('1000');
   const [smallBlindInput, setSmallBlindInput] = useState('5');
   const [bigBlindInput, setBigBlindInput] = useState('10');
-  const [gameVariant, setGameVariant] = useState<'no-limit-holdem' | 'pot-limit-omaha'>('no-limit-holdem');
+  const gameVariant = 'no-limit-holdem' as const;
 
   const handleStartGame = () => {
     const startingBalance = Math.max(0, parseInt(startingBalanceInput || '0', 10));
@@ -37,6 +37,11 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
       <Card className="w-full max-w-2xl">
         <CardHeader>
           <CardTitle className="text-3xl text-center">Poker AI Assistant Setup</CardTitle>
+          <div className="text-center mt-2">
+            <span className="inline-block bg-green-100 text-green-800 text-sm font-semibold px-3 py-1 rounded-full border border-green-300">
+              No Limit Hold'em
+            </span>
+          </div>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="grid gap-4">
@@ -151,18 +156,6 @@ export function GameSetup({ onStartGame }: GameSetupProps) {
               </div>
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="variant">Game Variant</Label>
-              <Select value={gameVariant} onValueChange={(val) => setGameVariant(val as typeof gameVariant)}>
-                <SelectTrigger id="variant">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="no-limit-holdem">No Limit Hold'em</SelectItem>
-                  <SelectItem value="pot-limit-omaha">Pot Limit Omaha</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
           </div>
 
           <Button onClick={handleStartGame} className="w-full" size="lg">

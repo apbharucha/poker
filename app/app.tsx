@@ -44,6 +44,7 @@ function App() {
   const [forceBluff, setForceBluff] = useState(false);
   const [bluffAttemptActive, setBluffAttemptActive] = useState(false);
   const [bluffEligible, setBluffEligible] = useState(false);
+  const [currentPot, setCurrentPot] = useState(0);
   
   const dataStorage = getDataStorage();
   const [bluffStats, setBluffStats] = useState<{ attempts: number; successes: number; failures: number }>(() => dataStorage.getBluffStats());
@@ -118,6 +119,7 @@ function App() {
     };
     
     setGameState(newGameState);
+    setCurrentPot(newGameState.pot);
     
     // Track session start time
     if (!sessionStartTime) {
@@ -262,9 +264,12 @@ function App() {
         );
       }
 
-      let newPot = gameState.pot + actionAmount;
+      const newPot = gameState.pot + actionAmount;
       
       console.log(`[Pot Update] Action: ${action}, Amount: $${actionAmount}, Old Pot: $${gameState.pot}, New Pot: $${newPot}`);
+      
+      // Update dedicated pot state immediately
+      setCurrentPot(newPot);
 
       // If only one player remains active, end the hand immediately and award the pot
       const remainingActive = updatedPlayers.filter(p => p.isActive).length;
@@ -289,6 +294,7 @@ function App() {
         // Store completed hand (only now)
         dataStorage.storeHand({ ...gameState, players: updatedPlayers, pot: 0 }, outcome);
 
+        setCurrentPot(0);
         setGameState({
           ...gameState,
           players: updatedPlayers.map(p => ({ ...p, currentBet: 0 })),
@@ -306,12 +312,14 @@ function App() {
       const maxBet = Math.max(...updatedPlayers.map(p => p.currentBet));
       const allMatched = activePlayers.every(p => p.currentBet === maxBet || p.stack === 0);
       
-      setGameState({
+      // Create completely new state object to force React re-render
+      const newGameState = {
         ...gameState,
-        players: updatedPlayers,
+        players: [...updatedPlayers],
         pot: newPot,
         bettingComplete: allMatched && activePlayers.length > 1
-      });
+      };
+      setGameState(newGameState);
       
       if (allMatched && activePlayers.length > 1) {
         setBettingPhaseActive(false);
@@ -513,10 +521,12 @@ function App() {
       safety++;
     }
 
+    const newPot = gameState.setup.smallBlind + gameState.setup.bigBlind;
+    setCurrentPot(newPot);
     setGameState({
       ...gameState,
       currentRound: 'preflop',
-      pot: gameState.setup.smallBlind + gameState.setup.bigBlind,
+      pot: newPot,
       communityCards: [],
       userHoleCards: [],
       currentHandNumber: gameState.currentHandNumber + 1,
@@ -575,6 +585,7 @@ function App() {
       pot += deduct;
     }
 
+    setCurrentPot(pot);
     setGameState({
       ...gameState,
       smallBlindPosition: playerId,
@@ -610,6 +621,7 @@ function App() {
       pot += deduct;
     }
 
+    setCurrentPot(pot);
     setGameState({
       ...gameState,
       bigBlindPosition: playerId,
@@ -727,6 +739,7 @@ function App() {
 
     // Adjust pot
     const newPot = Math.max(0, gameState.pot - totalRefund);
+    setCurrentPot(newPot);
 
     // Set this player as the current turn
     setGameState({
@@ -763,8 +776,8 @@ function App() {
                 <Badge variant="secondary" className="text-lg px-4 py-2">
                   {gameState.currentRound.toUpperCase()}
                 </Badge>
-                <Badge variant="secondary" className="text-lg px-4 py-2" key={`pot-badge-${gameState.pot}`}>
-                  Pot: ${gameState.pot} ({(gameState.pot / gameState.setup.bigBlind).toFixed(1)} BB)
+                <Badge variant="secondary" className="text-lg px-4 py-2">
+                  Pot: ${currentPot.toFixed(0)} ({(currentPot / gameState.setup.bigBlind).toFixed(1)} BB)
                 </Badge>
                 <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)} className="text-gray-800">
                   <Settings className="h-4 w-4 mr-2" />
@@ -835,15 +848,15 @@ function App() {
                 <Separator className="my-4" />
 
                 {/* Pot Display */}
-                <div className="flex justify-center my-4" key={`pot-display-${gameState.pot}`}>
+                <div className="flex justify-center my-4">
                   <div className="bg-gradient-to-r from-yellow-600 to-amber-600 text-white px-6 py-3 rounded-full shadow-lg">
                     <div className="text-center">
                       <div className="text-xs font-semibold uppercase tracking-wide">Current Pot</div>
                       <div className="text-2xl font-bold">
-                        ${gameState.pot}
+                        ${currentPot.toFixed(0)}
                       </div>
                       <div className="text-sm opacity-90">
-                        {(gameState.pot / gameState.setup.bigBlind).toFixed(1)} BB
+                        {(currentPot / gameState.setup.bigBlind).toFixed(1)} BB
                       </div>
                     </div>
                   </div>

@@ -1,4 +1,4 @@
-import { Card } from '@/types/poker';
+import { Card, Rank } from '@/types/poker';
 import { getBestHand } from '@/lib/hand-evaluator';
 import { Card as UICard, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -120,13 +120,85 @@ function formatHandDescription(description: string, holeCards: Card[], community
 }
 
 export function HandStrength({ holeCards, communityCards }: HandStrengthProps) {
-  if (holeCards.length < 2) {
+  if (holeCards.length === 0) {
     return null;
   }
   
-  const evaluation = getBestHand(holeCards, communityCards);
+  // Helper to get rank name
+  const getRankName = (rank: Rank, plural: boolean = false): string => {
+    const rankNames: Record<Rank, string> = {
+      'A': 'Ace', 'K': 'King', 'Q': 'Queen', 'J': 'Jack', '10': 'Ten',
+      '9': 'Nine', '8': 'Eight', '7': 'Seven', '6': 'Six', '5': 'Five',
+      '4': 'Four', '3': 'Three', '2': 'Two'
+    };
+    return plural ? rankNames[rank] + 's' : rankNames[rank];
+  };
+  
+  // Calculate display text
+  let displayText = '';
+  
+  if (communityCards.length === 0) {
+    // Preflop - evaluate hole cards directly
+    if (holeCards.length === 1) {
+      displayText = `${getRankName(holeCards[0].rank)} High`;
+    } else if (holeCards.length === 2) {
+      // Check if pocket pair
+      if (holeCards[0].rank === holeCards[1].rank) {
+        displayText = `Pair of ${getRankName(holeCards[0].rank, true)}`;
+      } else {
+        // High card - find the higher rank
+        const rankValues: Record<Rank, number> = {
+          '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
+          'J': 11, 'Q': 12, 'K': 13, 'A': 14,
+        };
+        const highCard = rankValues[holeCards[0].rank] > rankValues[holeCards[1].rank] 
+          ? holeCards[0] 
+          : holeCards[1];
+        displayText = `${getRankName(highCard.rank)} High`;
+      }
+    }
+  } else {
+    // Post-flop - use evaluator
+    const fullHandEval = getBestHand(holeCards, communityCards);
+    const boardOnlyEval = communityCards.length >= 5 ? getBestHand(communityCards, []) : null;
+    
+    if (communityCards.length < 5) {
+      // Before river - check if your hand is better than board
+      const boardEval = communityCards.length >= 3 ? getBestHand(communityCards, []) : null;
+      
+      if (boardEval && fullHandEval.rank > boardEval.rank) {
+        // Your full hand is better than board - show full hand
+        displayText = formatHandDescription(fullHandEval.description, holeCards, communityCards);
+      } else {
+        // Board is as good or better - show hole cards only
+        if (holeCards[0].rank === holeCards[1].rank) {
+          displayText = `Pair of ${getRankName(holeCards[0].rank, true)}`;
+        } else {
+          const rankValues: Record<Rank, number> = {
+            '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10,
+            'J': 11, 'Q': 12, 'K': 13, 'A': 14,
+          };
+          const highCard = rankValues[holeCards[0].rank] > rankValues[holeCards[1].rank] 
+            ? holeCards[0] 
+            : holeCards[1];
+          displayText = `${getRankName(highCard.rank)} High`;
+        }
+      }
+    } else {
+      // River or later - check if board plays
+      const boardPlays = boardOnlyEval && boardOnlyEval.rank >= fullHandEval.rank;
+      
+      if (boardPlays) {
+        // Board is better than or equal to player's hand
+        displayText = formatHandDescription(boardOnlyEval.description, communityCards, []) + ' (hole cards not in use)';
+      } else {
+        // Your hand is better than the board - show only your full hand strength
+        displayText = formatHandDescription(fullHandEval.description, holeCards, communityCards);
+      }
+    }
+  }
+  
   const draws = detectDraws(holeCards, communityCards);
-  const formattedDescription = formatHandDescription(evaluation.description, holeCards, communityCards);
   
   return (
     <UICard className="bg-gradient-to-br from-purple-50 to-blue-50">
@@ -136,7 +208,7 @@ export function HandStrength({ holeCards, communityCards }: HandStrengthProps) {
       <CardContent>
         <div className="space-y-2">
           <div className="text-xl font-bold text-purple-700">
-            {formattedDescription}
+            {displayText}
           </div>
           
           {draws.length > 0 && (
@@ -152,7 +224,12 @@ export function HandStrength({ holeCards, communityCards }: HandStrengthProps) {
             </div>
           )}
           
-          {communityCards.length === 0 && (
+          {communityCards.length === 0 && holeCards.length < 2 && (
+            <div className="text-xs text-gray-500 italic pt-1">
+              Select your hole cards to see hand strength
+            </div>
+          )}
+          {communityCards.length === 0 && holeCards.length === 2 && (
             <div className="text-xs text-gray-500 italic pt-1">
               Preflop - waiting for community cards
             </div>

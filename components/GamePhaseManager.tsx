@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Card } from '@/types/poker';
-import { CardSelector } from './CardSelector';
 import { Button } from '@/components/ui/button';
 import { Card as UICard, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
@@ -20,12 +19,10 @@ interface GamePhaseManagerProps {
 export function GamePhaseManager({
   currentRound,
   communityCards,
-  onCommunityCardsChange,
   onAdvancePhase,
   onNextHand,
   onFinishHand,
   handOutcome,
-  holeCards,
   onAwardPot,
   onBackToActions,
 }: GamePhaseManagerProps) {
@@ -140,23 +137,6 @@ export function GamePhaseManager({
             </div>
           </div>
         )}
-        <CardSelector
-          selectedCards={communityCards}
-          onCardsChange={onCommunityCardsChange}
-          maxCards={(() => {
-            // Allow selecting 3 on flop, then exactly 1 on turn and 1 on river
-            if (currentRound === 'flop') return 3;
-            // On turn/river, let user add one more card beyond current count (capped at 5)
-            return Math.min(5, communityCards.length + 1);
-          })()}
-          title={(() => {
-            if (currentRound === 'flop') return `Select ${Math.max(0, 3 - communityCards.length)} more card(s)`;
-            if (currentRound === 'turn') return `Select ${communityCards.length >= 4 ? 0 : 1} more card(s)`;
-            if (currentRound === 'river') return `Select ${communityCards.length >= 5 ? 0 : 1} more card(s)`;
-            return 'Select community cards';
-          })()}
-          excludeCards={holeCards || []}
-        />
         
         <div className="flex gap-2">
           <Button 
